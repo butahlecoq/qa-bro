@@ -8,6 +8,7 @@ from time import time_ns
 from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Attempt, Observation, Verdict
+from qabro.jobs import Job
 from qabro.journal import Journal
 
 
@@ -88,6 +89,35 @@ def validate_next_hint(
         SkillRef(f"hint:{job.id}", "1", draft["summary"]), Scope(**draft["scope"]),
         draft["hint"], frozenset(draft["variants"]), draft["variable_inputs"],
     )
+    return _validate_job(catalog, job, candidate, validate, clock)
+
+
+def revalidate_next_hint(
+    catalog: Catalog,
+    prepare: Callable[[SkillRef, Scope], HintCandidate | None],
+    validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
+    *,
+    clock: Callable[[], int] = time_ns,
+) -> bool:
+    queue = catalog.jobs
+    job = queue.claim("revalidate", now_ns=clock(), lease_ns=300_000_000_000)
+    if job is None:
+        return False
+    source = SkillRef(**job.payload["skill"])
+    scope = Scope(**job.payload["scope"])
+    candidate = prepare(source, scope)
+    if candidate is None:
+        return queue.complete(job, {"published": False}, now_ns=clock())
+    if candidate.scope != scope or candidate.ref.id != source.id or candidate.ref.revision == source.revision:
+        raise ValueError("Revalidation requires a new revision in the quarantined scope")
+    return _validate_job(catalog, job, candidate, validate, clock)
+
+
+def _validate_job(
+    catalog: Catalog, job: Job, candidate: HintCandidate,
+    validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
+    clock: Callable[[], int],
+) -> bool:
     runs = validate(candidate)
     store = ArtifactStore(catalog.path)
     journal = Journal(catalog.path)
@@ -124,7 +154,7 @@ def validate_next_hint(
             db, candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities,
         )
 
-    return queue.complete(
+    return catalog.jobs.complete(
         job, {"published": accepted, "sessions": [run.session_id for run in runs],
               "evidence": sorted(references)},
         now_ns=clock(), finalize=publish if accepted else None,

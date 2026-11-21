@@ -39,7 +39,7 @@ class ValidationTests(unittest.TestCase):
         from qabro.evidence import Evidence
         from qabro.journal import Journal
         from qabro.runner import Action, run_scenario
-        from qabro.validation import validate_next_hint
+        from qabro.validation import revalidate_next_hint, validate_next_hint
 
         path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
         catalog = Catalog(path)
@@ -59,7 +59,7 @@ class ValidationTests(unittest.TestCase):
             journal = Journal(path)
             runs = []
             for index, artifact in enumerate(artifacts):
-                attempt = f"validation-{index}"
+                attempt = f"validation-{candidate.ref.revision}-{index}"
                 journal.start(attempt, attempt, "validator")
                 journal.claim_tab("fixture", attempt, attempt)
                 browser = BrowserCalls(
@@ -80,3 +80,16 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.load_hint("after", ref), draft["hint"])
         store.prune(before=99, max_bytes=0)
         self.assertTrue(all(store.get(artifact) for artifact in artifacts))
+
+        self.assertEqual(catalog.quarantine_scope(scope, "Changed category widget"), [ref])
+        catalog.pin("during-quarantine")
+        self.assertEqual(catalog.search("during-quarantine", "category", scope, frozenset()), [])
+        replacement = SkillRef(ref.id, "2", ref.summary)
+
+        def prepare(source, observed_scope):
+            self.assertEqual((source, observed_scope), (ref, scope))
+            return HintCandidate(replacement, scope, draft["hint"], frozenset({"open"}), False)
+
+        self.assertTrue(revalidate_next_hint(catalog, prepare, validate, clock=lambda: 3))
+        catalog.pin("after-revalidation")
+        self.assertEqual(catalog.search("after-revalidation", "category", scope, frozenset()), [replacement])
