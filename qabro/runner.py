@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from time import monotonic_ns, sleep
+from uuid import uuid4
 
 from qabro.bindings import AttemptBindings, Option, Options, UnresolvedBinding
 from qabro.budget import BudgetExhausted
@@ -145,6 +146,7 @@ def run_scenario(
     probe_branch: Callable[[Step, str, int], bool | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
+    verify_resume: Callable[[BrowserCalls], Evidence] | None = None,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
     on_step_verified: Callable[[Step, str, int], None] | None = None,
 ) -> Attempt:
@@ -180,6 +182,18 @@ def run_scenario(
         planned.update(enumerate(expanded, start=index))
     cause = Cause.UNKNOWN
     blocked = False
+    if resume:
+        if verify_resume is None:
+            raise ValueError("Resume requires a fresh browser document check")
+        started = monotonic_ns()
+        proof = verify_resume(browser)
+        verified = started <= proof.observed_ns <= monotonic_ns() and proof.matches is True
+        journal.append(attempt_id, f"resume:{uuid4().hex}", "resume_document_check", {
+            "context": browser.context, "tab": browser.tab,
+            "artifact_id": proof.artifact_id, "verified": verified,
+        })
+        if not verified:
+            raise EnvironmentBlocked(proof.artifact_id)
     try:
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:

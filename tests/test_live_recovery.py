@@ -96,7 +96,19 @@ class LiveRecoveryTests(unittest.TestCase):
             def recover(action, step):
                 self.assertIs(reconcile(browser, action, "fresh", "snapshot", {}, observe), Effect.COMPLETED)
 
-            attempt = run_scenario(scenario, browser, resolve, lambda *_: None, recover=recover, resume=True)
+            def verify_resume(adapter):
+                from time import monotonic_ns
+                from qabro.evidence import Evidence
+                from qabro.browser import Outcome
+
+                snapshot = adapter.invoke("resume-document", "inspect", "snapshot", {}, read_only=True)
+                matches = snapshot.outcome is Outcome.RETURNED and "Requirements" in str(snapshot.raw)
+                return Evidence(monotonic_ns(), "resume-document:finish", matches)
+
+            attempt = run_scenario(
+                scenario, browser, resolve, lambda *_: None, recover=recover,
+                resume=True, verify_resume=verify_resume,
+            )
             self.assertIs(attempt.verdict, Verdict.PASS)
             self.assertEqual(attempt.completed_steps, tuple(actions))
         self.assertEqual(journal.actions_to_reconcile(tab), [])

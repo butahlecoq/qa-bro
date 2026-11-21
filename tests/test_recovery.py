@@ -7,6 +7,12 @@ from qabro.journal import Journal
 from qabro.recovery import Effect, reconcile
 
 
+def fresh_document(browser):
+    from time import monotonic_ns
+    from qabro.evidence import Evidence
+    return Evidence(monotonic_ns(), "document-observation", True)
+
+
 class RecoveryTests(unittest.TestCase):
     def test_fresh_snapshot_confirms_submit_that_timed_out(self):
         directory = self.enterContext(TemporaryDirectory())
@@ -103,7 +109,8 @@ class RecoveryTests(unittest.TestCase):
         def recover(action, step):
             reconcile(reopened, action, "fresh", "snapshot", {}, lambda _: Effect.COMPLETED)
 
-        attempt = run_scenario(scenario, reopened, resolve, lambda *_: None, recover=recover, resume=True)
+        attempt = run_scenario(scenario, reopened, resolve, lambda *_: None, recover=recover,
+                               resume=True, verify_resume=fresh_document)
         self.assertEqual(calls, ["submit", "snapshot", "close"])
         self.assertEqual(attempt.verdict, Verdict.PASS)
 
@@ -144,5 +151,6 @@ class RecoveryTests(unittest.TestCase):
         result = run_scenario(
             scenario, browser, lambda _: self.fail("Must not automatically resubmit"), lambda *_: None,
             recover=lambda *_: self.fail("The effect was already reconciled"), resume=True,
+            verify_resume=fresh_document,
         )
         self.assertEqual(result.verdict, Verdict.INCONCLUSIVE)

@@ -182,7 +182,8 @@ class RunnerTests(unittest.TestCase):
             run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
                          bindings=bindings, resume=True)
         result = run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
-                              bindings=bindings, resume=True, load_recipe=lambda *_: recipe)
+                              bindings=bindings, resume=True, load_recipe=lambda *_: recipe,
+                              verify_resume=lambda _: Evidence(monotonic_ns(), "document", True))
         self.assertEqual(result.verdict, Verdict.PASS)
 
     def test_uncertain_effect_is_reported_with_the_action_reference(self):
