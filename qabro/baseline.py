@@ -59,6 +59,9 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str) -> dict:
             "attempt": attempt, "server": transport.server_info, "verdict": result.verdict,
             "browser_calls": sum(kind == "tool_start" for _, _, kind, _ in events),
             "model_calls": 0, "tokens": 0, "elapsed_ns": elapsed,
+            "checkpoints": [
+                payload for _, _, kind, payload in events if kind == "checkpoint"
+            ],
         }
 
 
