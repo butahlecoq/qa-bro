@@ -22,6 +22,7 @@ def run_next_probe(
     execute: Callable[[Job, BrowserCalls], dict],
     clock: Callable[[], int] = time_ns,
     recover: Callable[[Job, BrowserCalls], dict | None] | None = None,
+    prepare_tab: Callable[[str], None] | None = None,
 ) -> bool:
     """Use a stable attempt and dedicated tab for a host-configured probe."""
     if queue.path.resolve() != journal.path.resolve():
@@ -58,6 +59,8 @@ def run_next_probe(
                 return False
             result = recover(job, browser)
         else:
+            if prepare_tab is not None:
+                prepare_tab(tab)
             journal.append(attempt, "probe:started", "probe_started", {}, reserve=True)
             result = execute(job, browser)
         if result is None or journal.actions_to_reconcile(attempt):

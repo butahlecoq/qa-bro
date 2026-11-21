@@ -77,6 +77,17 @@ class BrowseTransport:
                 raise ConnectionError("browse MCP closed its output")
             self._buffer.extend(chunk)
 
+    def prepare_tab(self, tab: str, *, allowed_origins: tuple[str, ...]) -> None:
+        """Open a named browser tab or reuse the handle already associated with it."""
+        if not allowed_origins:
+            raise ValueError("A probe tab requires an explicit origin allowlist")
+        result = self.request("tools/call", {
+            "name": "tabs",
+            "arguments": {"action": "new", "id": tab, "allowedOrigins": list(allowed_origins)},
+        })
+        if result.get("isError") or not result.get("content"):
+            raise RuntimeError("Browse could not prepare the probe tab")
+
     def __call__(self, tab: str, tool: str, arguments: dict) -> object:
         return self.request("tools/call", {
             "name": tool, "arguments": {**arguments, "tab": tab},
