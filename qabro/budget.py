@@ -1,5 +1,6 @@
 """Shared limits for one scenario and its synchronous work."""
 
+from collections.abc import Callable
 from math import isfinite
 from threading import Lock
 from time import monotonic_ns
@@ -40,3 +41,7 @@ class Budget:
     def counts(self) -> dict[str, int]:
         with self._lock:
             return self._counts.copy()
+
+    def call_model[Result](self, call: Callable[[float], Result]) -> Result:
+        """Invoke a model adapter with the remaining wall-clock allowance."""
+        return call(self.consume("model"))

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from qabro.budget import Budget
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Step
 from qabro.runner import Recipe
@@ -28,3 +29,15 @@ class RunSkills:
         if selected not in options:
             raise ValueError("Agent selected a skill outside the offered scope")
         return self.catalog.load_recipe(self.run, selected)
+
+    def select_with_model(
+        self,
+        step: Step,
+        budget: Budget,
+        choose: Callable[[Step, tuple[SkillRef, ...], float], SkillRef | None],
+    ) -> Recipe | None:
+        return self.select_recipe(
+            step, lambda source, options: budget.call_model(
+                lambda remaining: choose(source, options, remaining)
+            ),
+        )
