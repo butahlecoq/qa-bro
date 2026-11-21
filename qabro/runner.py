@@ -9,7 +9,7 @@ from time import monotonic_ns, sleep
 from qabro.bindings import AttemptBindings, Option
 from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
-from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step
+from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
 from qabro.recovery import confirmed_completion
 
@@ -93,6 +93,7 @@ def run_scenario(
         if covered != scenario.steps[index:index + len(covered)] or bindings is None:
             raise ValueError("The pinned recipe cannot resume this scenario")
         planned.update(enumerate(recipe.steps, start=index))
+    cause = Cause.UNKNOWN
     try:
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:
@@ -128,11 +129,12 @@ def run_scenario(
                     result = None
                 succeeded = result is not None and result.outcome is Outcome.RETURNED
             if not succeeded:
-                if recover is None:
-                    break
-                if saved.get(f"{action_id}:reconciled", {}).get("effect") != "completed":
+                if recover is not None and saved.get(f"{action_id}:reconciled", {}).get("effect") != "completed":
                     recover(action_id, step)
                 if not confirmed_completion(browser, action_id):
+                    journal.append(attempt_id, f"{action_id}:uncertain", "unresolved_effect", {
+                        "step": step.id, "action_event_id": f"{action_id}:start",
+                    })
                     break
             completed.append(step.id)
             for checkpoint in step.checkpoints:
@@ -165,6 +167,7 @@ def run_scenario(
             ):
                 break
     except BudgetExhausted as error:
+        cause = Cause.AUTOMATION
         journal.append(attempt_id, "scenario:budget", "budget_exhausted", {"reason": str(error)})
     except TimeoutError:
         journal.append(attempt_id, "scenario:timeout", "attempt_timeout", {})
@@ -179,8 +182,12 @@ def run_scenario(
                 "artifact_id": artifacts.get(checkpoint.id),
             })
 
-    attempt = Attempt(scenario, tuple(completed), observations)
-    journal.append(attempt_id, "scenario:finish", "scenario_finish", {"verdict": attempt.verdict})
+    if Observation.MISMATCH in observations.values():
+        cause = Cause.PRODUCT
+    attempt = Attempt(scenario, tuple(completed), observations, cause=cause)
+    journal.append(attempt_id, "scenario:finish", "scenario_finish", {
+        "verdict": attempt.verdict, "cause": attempt.cause,
+    })
     return attempt
 
 

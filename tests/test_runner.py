@@ -184,3 +184,20 @@ class RunnerTests(unittest.TestCase):
         result = run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
                               bindings=bindings, resume=True, load_recipe=lambda *_: recipe)
         self.assertEqual(result.verdict, Verdict.PASS)
+
+    def test_uncertain_effect_is_reported_with_the_action_reference(self):
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        scenario = Scenario("Save", (Step("save", "Save"),))
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", lambda *_: {},
+                               lambda value: value)
+        attempt = run_scenario(scenario, browser, lambda _: Action("click", {}), lambda *_: None)
+        self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
+        self.assertEqual(journal.events("attempt")[-2][3], {
+            "step": "save", "action_event_id": "step-0:start",
+        })
+        self.assertEqual(journal.events("attempt")[-1][3], {
+            "verdict": "INCONCLUSIVE", "cause": "unknown",
+        })

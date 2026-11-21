@@ -15,6 +15,13 @@ class Observation(StrEnum):
     NOT_REACHED = "not_reached"
 
 
+class Cause(StrEnum):
+    PRODUCT = "product"
+    AUTOMATION = "automation"
+    ENVIRONMENT = "environment"
+    UNKNOWN = "unknown"
+
+
 class Verdict(StrEnum):
     PASS = "PASS"
     FAIL = "FAIL"
@@ -70,6 +77,7 @@ class Attempt:
     observations: Mapping[str, Observation]
     blocked: bool = False
     invalid_evidence: bool = False
+    cause: Cause = Cause.UNKNOWN
 
     def __post_init__(self):
         checkpoint_ids = {checkpoint.id for checkpoint in self.scenario.checkpoints}
