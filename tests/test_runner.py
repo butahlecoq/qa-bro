@@ -201,3 +201,26 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(journal.events("attempt")[-1][3], {
             "verdict": "INCONCLUSIVE", "cause": "unknown",
         })
+
+    def test_ambiguous_target_stops_before_dispatch_and_preserves_evidence(self):
+        from qabro.runner import AmbiguousTarget
+
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        scenario = Scenario("Click Save", (Step("save", "Click Save"),))
+        browser = BrowserCalls(journal, "attempt", "shared", "tab",
+                               lambda *_: self.fail("Ambiguous target must not be clicked"),
+                               lambda value: value)
+
+        def resolve(step):
+            raise AmbiguousTarget("snapshot-with-two-buttons")
+
+        attempt = run_scenario(scenario, browser, resolve, lambda *_: None)
+        self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
+        events = {kind: payload for _, _, kind, payload in journal.events("attempt")}
+        self.assertNotIn("tool_start", events)
+        self.assertEqual(events["ambiguous_target"], {
+            "step": "save", "artifact_id": "snapshot-with-two-buttons",
+        })
+        self.assertEqual(events["scenario_finish"]["cause"], "automation")

@@ -6,12 +6,22 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from time import monotonic_ns, sleep
 
-from qabro.bindings import AttemptBindings, Option
+from qabro.bindings import AttemptBindings, Option, UnresolvedBinding
 from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
 from qabro.recovery import confirmed_completion
+
+
+class AmbiguousTarget(Exception):
+    """Several observed UI elements could satisfy the source action."""
+
+    def __init__(self, artifact_id: str):
+        super().__init__("The source action has multiple possible UI targets")
+        if not artifact_id:
+            raise ValueError("Ambiguous targets require an evidence reference")
+        self.artifact_id = artifact_id
 
 
 @dataclass(frozen=True)
@@ -166,6 +176,14 @@ def run_scenario(
                 for checkpoint in step.checkpoints
             ):
                 break
+    except AmbiguousTarget as error:
+        cause = Cause.AUTOMATION
+        journal.append(attempt_id, f"{action_id}:ambiguous", "ambiguous_target", {
+            "step": step.id, "artifact_id": error.artifact_id,
+        })
+    except UnresolvedBinding:
+        cause = Cause.AUTOMATION
+        journal.append(attempt_id, f"{action_id}:binding", "unresolved_binding", {"step": step.id})
     except BudgetExhausted as error:
         cause = Cause.AUTOMATION
         journal.append(attempt_id, "scenario:budget", "budget_exhausted", {"reason": str(error)})
