@@ -102,3 +102,14 @@ python -m qabro.retention /tmp/qabro-smoke.sqlite --age-days 30 --journal-bytes 
 ```
 
 The report counts stored payload bytes. SQLite file size also includes indexes, free pages, and database overhead. Active leases, unresolved effects, and pinned evidence can keep usage above the configured limits.
+
+## Compiled execution trial
+
+Plain browse dispatch remains the default. In a paired local Chromium trial, the single-call prototype preserved the ordered step outcomes and final form state on success and on a failed checkpoint. With a missing target after a successful fill, the form retained the first value on both backends. When the outer `execute` deadline expired during target resolution, the response omitted the completed step prefix. This prevents recovery from using the returned trace to locate the partial effect, so latency savings cannot qualify this prototype for activation.
+
+Run the paired trial with the same relay and fixture as the smoke test. Set `QABRO_BROWSE` if the browse executable is outside `PATH`.
+
+```sh
+QABRO_FIXTURE_URL=http://127.0.0.1:18765/requirements.html \
+  python -m unittest discover -s tests -p test_live_compiled_browser.py -v
+```
