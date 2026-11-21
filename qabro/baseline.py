@@ -115,6 +115,9 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         started = monotonic_ns()
         result = run_scenario(scenario, browser, resolve, observe, **recipe_options)
         elapsed = monotonic_ns() - started
+        journal.append(attempt, "baseline:usage", "baseline_usage", {
+            "model_calls": 0, "input_tokens": 0, "output_tokens": 0, "elapsed_ns": elapsed,
+        })
         journal.release_tab("fixture", tab, attempt)
         events = journal.events(attempt)
         return {

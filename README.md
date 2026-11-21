@@ -58,7 +58,7 @@ On the verified run the agent reported `PASS` with the exact expected row. The J
 
 To exercise the controlled defect, append `?wrong-category` to the fixture URL in the prompt and choose a different tab name. Keep the expected row unchanged. In the verified run, the browser returned `Agent sample | 2027-01-20 | wrong` after reporting successful creation. The agent reported `FAIL`. The trace recorded 11 completed model steps, 10 OpenCode tool dispatches, and 29.4 seconds between the first and last events.
 
-For the corporate Pi smoke test, use the existing authenticated harness with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage for one existing scenario. Verify that the references resolve locally and that the stored trace omits authentication material.
+For the corporate Pi smoke test, use the existing authenticated harness with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage for one existing scenario. Record measured `model_calls`, `input_tokens`, `output_tokens` and `elapsed_ns` in the attempt's `baseline:usage` event. Run `python -m qabro.baseline_evidence DATABASE ATTEMPT_ID` to check source step order, installed tool identities and evidence references. The command prints an evidence summary without raw browser output. Inspect persisted evidence locally to verify that authentication material was redacted.
 
 ### Skill lookup from an existing agent
 

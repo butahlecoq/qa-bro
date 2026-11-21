@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from qabro.baseline import run_fixture
+from qabro.baseline_evidence import baseline_evidence
 from qabro.browse_transport import BrowseTransport
 from qabro.catalog import Catalog, SkillRef
 from qabro.contract import Verdict
@@ -37,6 +38,10 @@ class LiveReplayTests(unittest.TestCase):
                             live(tab, "tabs", {"action": "close"})
                     self.assertEqual(result["recipes"], int(replay))
                     self.assertIs(result["verdict"], expected)
+                    if not replay:
+                        proof = baseline_evidence(database, result["attempt"])
+                        self.assertEqual(proof["browser_calls"], result["browser_calls"])
+                        self.assertEqual(proof["verdict"], expected)
                     check, = result["checkpoints"]
                     self.assertTrue(check["artifact_id"])
                     trace = [
