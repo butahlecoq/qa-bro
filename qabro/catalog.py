@@ -9,7 +9,7 @@ from pathlib import Path
 
 from qabro.jobs import JobQueue
 from qabro.recipe_format import decode_recipe, encode_recipe
-from qabro.runner import Recipe, RecipeStep
+from qabro.runner import Recipe, RecipeCall, RecipeStep
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,10 @@ class Catalog:
                 );
                 CREATE TABLE IF NOT EXISTS skill_recipes (
                     row_id INTEGER PRIMARY KEY REFERENCES skill_revisions(row_id), body TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS recipe_dependencies (
+                    parent INTEGER NOT NULL, child INTEGER NOT NULL,
+                    PRIMARY KEY (parent, child)
                 );
                 CREATE VIRTUAL TABLE IF NOT EXISTS skill_search USING fts5(summary);
                 CREATE TABLE IF NOT EXISTS active_skills (
@@ -80,6 +84,23 @@ class Catalog:
             tools = {step.tool for step in recipe.steps if isinstance(step, RecipeStep)}
             if not tools <= capabilities:
                 raise ValueError("Recipe uses browser tools missing from its declared capabilities")
+        dependencies = set()
+        for node in recipe.steps if recipe is not None else ():
+            if not isinstance(node, RecipeCall):
+                continue
+            dependency = db.execute(
+                """
+                SELECT r.row_id, r.capabilities FROM skill_revisions r
+                JOIN skill_recipes recipe ON recipe.row_id=r.row_id
+                WHERE r.id=? AND r.revision=? AND r.platform=? AND r.component=?
+                  AND r.context=? AND r.role=?
+                  AND NOT EXISTS (SELECT 1 FROM quarantined_skills q WHERE q.row_id=r.row_id)
+                """,
+                (node.id, node.revision, scope.platform, scope.component, scope.context, scope.role),
+            ).fetchone()
+            if dependency is None or not capabilities.issuperset(json.loads(dependency[1])):
+                raise ValueError("Nested recipe revision or necessary capabilities are unavailable")
+            dependencies.add(dependency[0])
         row_id = db.execute(
             """
             INSERT INTO skill_revisions (
@@ -91,6 +112,8 @@ class Catalog:
         ).fetchone()[0]
         if recipe is not None:
             db.execute("INSERT INTO skill_recipes VALUES (?, ?)", (row_id, encode_recipe(recipe)))
+            db.executemany("INSERT INTO recipe_dependencies VALUES (?, ?)",
+                           ((row_id, child) for child in dependencies))
         db.execute("INSERT INTO skill_search(rowid, summary) VALUES (?, ?)", (row_id, ref.summary))
         db.execute(
             "INSERT INTO active_skills VALUES (?, ?) "
@@ -200,7 +223,19 @@ class Catalog:
     def pin(self, run: str) -> None:
         with closing(sqlite3.connect(self.path)) as db, db:
             if db.execute("INSERT OR IGNORE INTO catalog_runs VALUES (?)", (run,)).rowcount:
-                db.execute("INSERT INTO pinned_skills SELECT ?, row_id FROM active_skills", (run,))
+                db.execute("""
+                    WITH RECURSIVE dependencies(root, child) AS (
+                        SELECT parent, child FROM recipe_dependencies
+                        UNION
+                        SELECT d.root, r.child FROM dependencies d
+                        JOIN recipe_dependencies r ON r.parent=d.child
+                    )
+                    INSERT INTO pinned_skills
+                    SELECT ?, a.row_id FROM active_skills a WHERE NOT EXISTS (
+                        SELECT 1 FROM dependencies d JOIN quarantined_skills q ON q.row_id=d.child
+                        WHERE d.root=a.row_id
+                    )
+                """, (run,))
 
     def search(
         self, run: str, query: str, scope: Scope, capabilities: frozenset[str], *, limit: int = 5
@@ -258,10 +293,15 @@ class Catalog:
         with closing(sqlite3.connect(self.path)) as db:
             row = db.execute(
                 """
+                WITH RECURSIVE available(row_id) AS (
+                    SELECT row_id FROM pinned_skills WHERE run_id=?
+                    UNION
+                    SELECT d.child FROM recipe_dependencies d JOIN available a ON a.row_id=d.parent
+                )
                 SELECT body FROM skill_recipes recipe
                 JOIN skill_revisions r ON r.row_id=recipe.row_id
-                JOIN pinned_skills p ON p.row_id=r.row_id
-                WHERE p.run_id=? AND r.id=? AND r.revision=?
+                JOIN available a ON a.row_id=r.row_id
+                WHERE r.id=? AND r.revision=?
                 """,
                 (run, ref.id, ref.revision),
             ).fetchone()

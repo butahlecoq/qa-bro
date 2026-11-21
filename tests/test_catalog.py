@@ -116,3 +116,28 @@ class CatalogTests(unittest.TestCase):
         reopened = Catalog(path)
         self.assertIsNone(reopened.load_recipe("before", ref))
         self.assertEqual(reopened.load_recipe("after", ref), recipe)
+
+    def test_nested_recipe_pins_older_child_and_inherits_capability_requirement(self):
+        from qabro.contract import Step
+        from qabro.runner import Recipe, RecipeCall, RecipeStep
+
+        catalog = Catalog(Path(self.enterContext(TemporaryDirectory())) / "catalog.sqlite")
+        scope = Scope("fixture", "form", "requirements", "editor")
+        child = SkillRef("child", "1", "Child")
+        newer = SkillRef("child", "2", "Child")
+        parent = SkillRef("parent", "1", "Parent")
+        capabilities = frozenset({"fill"})
+        step = RecipeStep(Step("fill", "Fill"), "fill", ())
+        catalog.seed_verified_hint(child, scope, "Child", capabilities=capabilities,
+                                   recipe=Recipe(child.id, child.revision, (step,)))
+        parent_recipe = Recipe(parent.id, parent.revision, (RecipeCall(child.id, child.revision),))
+        with self.assertRaisesRegex(ValueError, "necessary capabilities"):
+            catalog.seed_verified_hint(parent, scope, "Parent", recipe=parent_recipe)
+        catalog.seed_verified_hint(parent, scope, "Parent", capabilities=capabilities, recipe=parent_recipe)
+        catalog.seed_verified_hint(newer, scope, "New child")
+        catalog.pin("before-quarantine")
+        self.assertIsNotNone(catalog.load_recipe("before-quarantine", child))
+        catalog.quarantine(child, "Invalid child")
+        catalog.pin("after-quarantine")
+        self.assertIsNone(catalog.load_recipe("after-quarantine", parent))
+        self.assertIsNotNone(catalog.load_recipe("before-quarantine", parent))
