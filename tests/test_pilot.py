@@ -24,3 +24,18 @@ class PilotTests(unittest.TestCase):
             frozen_catalog_report(trials, frozenset({"create"}), {})
         with self.assertRaises(ValueError):
             frozen_catalog_report(trials[:-1], frozenset(), {})
+
+    def test_break_even_accounts_for_maintenance_and_failed_reuse(self):
+        from qabro.pilot import SkillUse, skill_break_even
+
+        case = Case("clean", "create", Verdict.PASS)
+        ordinary = Trial(case, Mode.BASELINE, "same", Verdict.PASS, 12, 100)
+        reuse = Trial(case, Mode.RECIPES, "same", Verdict.PASS, 9, 40)
+        uses = [SkillUse(ordinary, reuse)] * 2
+        uses.append(SkillUse(ordinary, replace(reuse, verdict=Verdict.INCONCLUSIVE)))
+        result = skill_break_even(uses, LearningCost(50, 10), maintenance_tokens=15)
+        self.assertEqual(result["first_positive_use"], 2)
+        self.assertEqual(result["investment_tokens"], 75)
+        self.assertEqual(result["net_saved_tokens"], 5)
+        self.assertEqual(result["incorrect_reuses"], 1)
+        self.assertEqual(result["comparable_uses"], 2)

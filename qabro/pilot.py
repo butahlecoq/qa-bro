@@ -87,3 +87,45 @@ def frozen_catalog_report(
             "total_tokens": worker + cost.explorer_tokens + cost.validation_tokens,
         }
     return report
+
+
+@dataclass(frozen=True)
+class SkillUse:
+    ordinary: Trial
+    reuse: Trial
+
+    def __post_init__(self):
+        if (self.ordinary.case, self.ordinary.setup) != (self.reuse.case, self.reuse.setup):
+            raise ValueError("Skill use must compare the same scenario and setup")
+        if self.ordinary.mode is not Mode.BASELINE or self.reuse.mode is Mode.BASELINE:
+            raise ValueError("Skill use requires an ordinary baseline and a reuse trial")
+
+
+def skill_break_even(
+    uses: list[SkillUse], cost: LearningCost, *, maintenance_tokens: int = 0,
+) -> dict:
+    """Report cumulative token savings for ordered, matched uses of one skill."""
+    investment = cost.explorer_tokens + cost.validation_tokens + maintenance_tokens
+    net = -investment
+    first_positive_use = None
+    comparable = 0
+    incorrect_reuses = 0
+    for index, use in enumerate(uses, start=1):
+        expected = use.reuse.case.expected
+        if use.reuse.verdict is not expected:
+            incorrect_reuses += 1
+        if use.ordinary.verdict is expected and use.reuse.verdict is expected:
+            comparable += 1
+            net += use.ordinary.worker_tokens - use.reuse.worker_tokens
+        else:
+            net -= use.reuse.worker_tokens
+        if net > 0 and first_positive_use is None:
+            first_positive_use = index
+    return {
+        "uses": len(uses),
+        "comparable_uses": comparable,
+        "incorrect_reuses": incorrect_reuses,
+        "investment_tokens": investment,
+        "net_saved_tokens": net,
+        "first_positive_use": first_positive_use,
+    }
