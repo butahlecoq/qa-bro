@@ -106,7 +106,10 @@ def run_verdict(attempts: Iterable[Attempt]) -> Verdict:
     attempts = tuple(attempts)
     if attempts and any(attempt.scenario != attempts[0].scenario for attempt in attempts):
         raise ValueError("Run attempts must share the same scenario revision")
-    verdicts = tuple(attempt.verdict for attempt in attempts)
+    return overall_verdict(tuple(attempt.verdict for attempt in attempts))
+
+
+def overall_verdict(verdicts: tuple[Verdict, ...]) -> Verdict:
     if Verdict.FAIL in verdicts:
         return Verdict.FAIL
     if Verdict.PASS in verdicts:
