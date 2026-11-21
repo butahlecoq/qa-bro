@@ -11,6 +11,7 @@ from qabro.artifacts import ArtifactStore
 from qabro.bindings import AttemptBindings, Literal, Option, Select
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.browser import BrowserCalls, Outcome
+from qabro.browse_schema import snapshot_schema
 from qabro.browse_transport import BrowseTransport
 from qabro.budget import Budget
 from qabro.contract import Checkpoint, Scenario, Step
@@ -74,6 +75,8 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         }
     budget = Budget(browser_calls=7, model_calls=0, seconds=30)
     with BrowseTransport(executable, budget=budget) as transport:
+        schema = snapshot_schema(transport)
+        journal.append(attempt, "browse:schema", "browser_schema", schema)
         # The fixture uses synthetic values in a dedicated browser context.
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
                                artifacts=artifacts, budget=budget)
@@ -110,7 +113,8 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         journal.release_tab("fixture", tab, attempt)
         events = journal.events(attempt)
         return {
-            "attempt": attempt, "server": transport.server_info, "verdict": result.verdict,
+            "attempt": attempt, "server": schema["server"], "verdict": result.verdict,
+            "schema_sha256": schema["schema_sha256"],
             "browser_calls": sum(kind == "tool_start" for _, _, kind, _ in events),
             "model_calls": 0, "tokens": 0, "elapsed_ns": elapsed,
             "recipes": sum(kind == "recipe_selected" for _, _, kind, _ in events),

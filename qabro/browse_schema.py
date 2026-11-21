@@ -9,8 +9,12 @@ from qabro.browse_transport import BrowseTransport
 
 def inspect(executable: str) -> dict:
     with BrowseTransport(executable, timeout=10) as browse:
-        server = browse.server_info
-        tool_list = browse.request("tools/list", {})
+        return snapshot_schema(browse)
+
+
+def snapshot_schema(browse: BrowseTransport) -> dict:
+    server = browse.server_info
+    tool_list = browse.request("tools/list", {})
     try:
         tools = sorted(tool_list["tools"], key=lambda tool: tool["name"])
     except (KeyError, TypeError) as error:
