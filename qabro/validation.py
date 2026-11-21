@@ -1,6 +1,8 @@
 """Apply validation evidence requirements before publishing a skill hint."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from time import time_ns
 
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Attempt, Verdict
@@ -31,10 +33,7 @@ class ValidationRun:
     result: Attempt
 
 
-def publish_hint(
-    catalog: Catalog, candidate: HintCandidate, runs: tuple[ValidationRun, ...]
-) -> bool:
-    """Publish once the supplied independent runs cover the candidate's claims."""
+def eligible(candidate: HintCandidate, runs: tuple[ValidationRun, ...]) -> bool:
     if len(runs) < 3:
         return False
     if any(
@@ -54,7 +53,43 @@ def publish_hint(
         return False
     if candidate.variable_inputs and len({run.dataset_id for run in runs}) < 2:
         return False
+    return True
+
+
+def publish_hint(
+    catalog: Catalog, candidate: HintCandidate, runs: tuple[ValidationRun, ...]
+) -> bool:
+    if not eligible(candidate, runs):
+        return False
     catalog.seed_verified_hint(
         candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities
     )
     return True
+
+
+def validate_next_hint(
+    catalog: Catalog,
+    validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
+    *,
+    clock: Callable[[], int] = time_ns,
+) -> bool:
+    """Validate a queued draft and commit publication with the job result."""
+    queue = catalog.jobs
+    job = queue.claim("validate_hint", now_ns=clock(), lease_ns=300_000_000_000)
+    if job is None:
+        return False
+    draft = job.payload
+    candidate = HintCandidate(
+        SkillRef(f"hint:{job.id}", "1", draft["summary"]), Scope(**draft["scope"]),
+        draft["hint"], frozenset(draft["variants"]), draft["variable_inputs"],
+    )
+    runs = validate(candidate)
+    accepted = eligible(candidate, runs)
+    return queue.complete(
+        job, {"published": accepted, "sessions": [run.session_id for run in runs]},
+        now_ns=clock(), finalize=(
+            lambda db: catalog.publish_hint_in(
+                db, candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities,
+            )
+        ) if accepted else None,
+    )

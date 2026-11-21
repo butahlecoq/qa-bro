@@ -61,21 +61,28 @@ class Catalog:
         self, ref: SkillRef, scope: Scope, hint: str, *, capabilities: frozenset[str] = frozenset()
     ) -> None:
         with closing(sqlite3.connect(self.path)) as db, db:
-            row_id = db.execute(
-                """
-                INSERT INTO skill_revisions (
-                    id, revision, summary, platform, component, context, role, capabilities, hint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING row_id
-                """,
-                (ref.id, ref.revision, ref.summary, scope.platform, scope.component,
-                 scope.context, scope.role, json.dumps(sorted(capabilities)), hint),
-            ).fetchone()[0]
-            db.execute("INSERT INTO skill_search(rowid, summary) VALUES (?, ?)", (row_id, ref.summary))
-            db.execute(
-                "INSERT INTO active_skills VALUES (?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET row_id=excluded.row_id",
-                (ref.id, row_id),
-            )
+            self.publish_hint_in(db, ref, scope, hint, capabilities=capabilities)
+
+    @staticmethod
+    def publish_hint_in(
+        db: sqlite3.Connection, ref: SkillRef, scope: Scope, hint: str, *,
+        capabilities: frozenset[str],
+    ) -> None:
+        row_id = db.execute(
+            """
+            INSERT INTO skill_revisions (
+                id, revision, summary, platform, component, context, role, capabilities, hint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING row_id
+            """,
+            (ref.id, ref.revision, ref.summary, scope.platform, scope.component,
+             scope.context, scope.role, json.dumps(sorted(capabilities)), hint),
+        ).fetchone()[0]
+        db.execute("INSERT INTO skill_search(rowid, summary) VALUES (?, ?)", (row_id, ref.summary))
+        db.execute(
+            "INSERT INTO active_skills VALUES (?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET row_id=excluded.row_id",
+            (ref.id, row_id),
+        )
 
     def quarantine(self, ref: SkillRef, reason: str) -> None:
         """Exclude a revision from future runs and restore a compatible predecessor."""
