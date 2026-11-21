@@ -34,3 +34,20 @@ class JournalTests(unittest.TestCase):
         self.assertFalse(reopened.release_tab("shared", "one", "b"))
         self.assertTrue(reopened.release_tab("shared", "one", "a"))
         self.assertTrue(reopened.claim_tab("shared", "one", "b"))
+
+    def test_resource_claim_is_all_or_nothing_and_survives_restart(self):
+        self.assertTrue(self.journal.claim_resources("a", ("record:42",)))
+        reopened = Journal(self.path)
+        self.assertFalse(reopened.claim_resources("b", ("other", "record:42")))
+        self.assertTrue(reopened.claim_resources("a", ("other",)))
+        reopened.release_resources("b")
+        self.assertFalse(reopened.claim_resources("b", ("record:42",)))
+        reopened.release_resources("a")
+        self.assertTrue(reopened.claim_resources("b", ("record:42", "other")))
+
+    def test_resource_release_requires_reconciled_effects(self):
+        self.journal.claim_resources("a", ("record:42",))
+        self.journal.append("a", "save:start", "tool_start", {"step": "save"})
+        with self.assertRaises(RuntimeError):
+            self.journal.release_resources("a")
+        self.assertFalse(self.journal.claim_resources("b", ("record:42",)))

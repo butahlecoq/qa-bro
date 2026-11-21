@@ -30,6 +30,10 @@ class Journal:
                     PRIMARY KEY (attempt_id, sequence),
                     UNIQUE (attempt_id, event_id)
                 );
+                CREATE TABLE IF NOT EXISTS resource_leases (
+                    resource TEXT PRIMARY KEY,
+                    attempt_id TEXT NOT NULL REFERENCES attempts(id)
+                );
                 CREATE TABLE IF NOT EXISTS tab_leases (
                     context_id TEXT NOT NULL,
                     tab_id TEXT NOT NULL,
@@ -114,6 +118,31 @@ class Journal:
                 "SELECT attempt_id, payload FROM events WHERE kind=? ORDER BY rowid", (kind,)
             )
             return [(attempt, json.loads(payload)) for attempt, payload in rows]
+
+    def claim_resources(self, attempt: str, resources: tuple[str, ...]) -> bool:
+        """Acquire the entire resource set atomically or leave ownership unchanged."""
+        resources = tuple(sorted(set(resources)))
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            for resource in resources:
+                owner = db.execute(
+                    "SELECT attempt_id FROM resource_leases WHERE resource=?", (resource,)
+                ).fetchone()
+                if owner is not None and owner != (attempt,):
+                    return False
+            db.executemany(
+                "INSERT INTO resource_leases VALUES (?, ?) ON CONFLICT(resource) DO NOTHING",
+                ((resource, attempt) for resource in resources),
+            )
+        return True
+
+    def release_resources(self, attempt: str) -> None:
+        """Release resources after the caller verifies that its work has stopped."""
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            if self._actions_to_reconcile(self._events(db, attempt)):
+                raise RuntimeError("Cannot release resources while browser effects are unresolved")
+            db.execute("DELETE FROM resource_leases WHERE attempt_id=?", (attempt,))
 
     def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
