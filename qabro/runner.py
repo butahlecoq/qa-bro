@@ -201,6 +201,8 @@ def run_scenario(
                             journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
                                 "id": recipe.id, "revision": recipe.revision, "fingerprint": recipe.fingerprint,
                                 "steps": [item.id for item in covered],
+                                "branch_steps": [offset for offset, item in enumerate(expanded)
+                                                 if item.branch is not None],
                             })
                 if index in planned and bindings is not None:
                     item = planned[index]

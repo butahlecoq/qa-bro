@@ -158,6 +158,14 @@ def _recipe_steps_observed(selection: str, payload: dict, entries: dict) -> bool
     return bool(payload["steps"])
 
 
+def _recipe_branch_outcomes(selection: str, payload: dict, entries: dict) -> dict[int, bool | None]:
+    index = int(selection.removeprefix("recipe:"))
+    return {
+        offset: entries.get(f"step-{index + offset}:branch", {}).get("outcome")
+        for offset in payload.get("branch_steps", ())
+    }
+
+
 def _validate_job(
     catalog: Catalog, job: Job, candidate: HintCandidate,
     validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
@@ -167,20 +175,26 @@ def _validate_job(
     store = ArtifactStore(catalog.path)
     journal = Journal(catalog.path)
     references = set()
+    branches = {}
     accepted = eligible(candidate, runs)
     if len({run.attempt_id for run in runs}) != len(runs):
         accepted = False
     for run in runs:
         events = journal.events(run.attempt_id) if run.attempt_id else []
         entries = {event: payload for _, event, _, payload in events}
-        if candidate.recipe is not None and not any(
-            kind == "recipe_selected"
-            and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
-            and payload.get("fingerprint") == candidate.recipe.fingerprint
-            and _recipe_steps_observed(event, payload, entries)
-            for _, event, kind, payload in events
-        ):
-            accepted = False
+        if candidate.recipe is not None:
+            selections = [
+                (event, payload) for _, event, kind, payload in events
+                if kind == "recipe_selected"
+                and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
+                and payload.get("fingerprint") == candidate.recipe.fingerprint
+                and _recipe_steps_observed(event, payload, entries)
+            ]
+            if not selections:
+                accepted = False
+            for event, payload in selections:
+                for offset, outcome in _recipe_branch_outcomes(event, payload, entries).items():
+                    branches.setdefault(offset, set()).add(outcome)
         if entries.get("scenario:start", {}).get("contract_revision") != run.result.scenario.revision:
             accepted = False
         if entries.get("scenario:finish", {}).get("verdict") != Verdict.PASS:
@@ -194,6 +208,7 @@ def _validate_job(
             if recorded.get("outcome") != Observation.MATCH or recorded.get("artifact_id") != evidence.get(check):
                 accepted = False
         references.update(evidence.values())
+    accepted = accepted and all(outcomes == {True, False} for outcomes in branches.values())
     accepted = accepted and all(store.get(ref) is not None for ref in references)
 
     def publish(db: Connection) -> None:

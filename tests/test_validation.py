@@ -60,7 +60,7 @@ class ValidationTests(unittest.TestCase):
         store = ArtifactStore(path)
         artifacts = [store.put(f"snapshot {index}".encode(), now=1) for index in range(3)]
 
-        def validate(candidate):
+        def validate(candidate, branch_probe=None):
             step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
             scenario = Scenario("Open menu", (step,))
             journal = Journal(path)
@@ -78,6 +78,7 @@ class ValidationTests(unittest.TestCase):
                     lambda *_: Evidence(monotonic_ns(), artifact, True),
                     choose=lambda _: candidate.recipe, applicable=lambda _: True,
                     bindings=AttemptBindings({}, seed=0, base_time=datetime.now(UTC)),
+                    probe_branch=branch_probe,
                 )
                 runs.append(ValidationRun(candidate.ref, candidate.scope, str(index), str(index),
                                           "fixed", "open", result, (("options", artifact),), attempt))
@@ -139,3 +140,10 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(validate_next_hint(catalog, validate_fallback, clock=lambda: 5))
         catalog.pin("after-fallback")
         self.assertEqual(catalog.search("after-fallback", "category", scope, frozenset({"click"})), [replacement])
+
+        catalog.jobs.enqueue("single-branch", "validate_hint", draft)
+        self.assertTrue(validate_next_hint(catalog, lambda candidate: validate(candidate, lambda *_: True),
+                                          clock=lambda: 6))
+        catalog.pin("after-single-branch")
+        self.assertEqual(catalog.search("after-single-branch", "category", scope, frozenset({"click"})),
+                         [replacement])
