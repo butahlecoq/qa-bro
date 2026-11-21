@@ -34,6 +34,20 @@
     const category = defective ? "wrong" : data.get("category");
     const item = document.createElement("li");
     item.textContent = [data.get("name"), data.get("date"), category].join(" | ");
+    if (flags.has("probe-crud")) {
+      item.dataset.record = data.get("name");
+      const label = document.createElement("span");
+      label.textContent = item.textContent;
+      const rename = document.createElement("button");
+      rename.textContent = "Rename";
+      rename.onclick = () => {
+        label.textContent = ["Updated probe sample", data.get("date"), category].join(" | ");
+      };
+      const remove = document.createElement("button");
+      remove.textContent = "Delete";
+      remove.onclick = () => item.remove();
+      item.replaceChildren(label, rename, remove);
+    }
     list.append(item);
     status.textContent = "Requirement created";
     form.reset();

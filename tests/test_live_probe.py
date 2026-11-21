@@ -14,7 +14,7 @@ from qabro.probes import run_next_probe
 
 @unittest.skipUnless(os.environ.get("QABRO_FIXTURE_URL"), "Requires the live browser fixture")
 class LiveProbeTests(unittest.TestCase):
-    def test_probe_creates_only_its_own_fixture_record(self):
+    def test_probe_manages_only_its_own_fixture_record(self):
         url = os.environ["QABRO_FIXTURE_URL"]
         parsed = urlsplit(url)
         self.assertIn(parsed.hostname, ("127.0.0.1", "localhost"))
@@ -26,17 +26,27 @@ class LiveProbeTests(unittest.TestCase):
         journal.claim_tab("shared", worker_tab, "worker")
         queue.enqueue(f"fixture-create-{uuid4().hex}", "probe", {"resources": ["record:probe"]})
         actions = (
-            ("navigate", {"url": url}),
+            ("navigate", {"url": url + "?probe-crud"}),
             ("fill", {"selector": "input[name=name]", "value": "Probe sample"}),
             ("fill", {"selector": "input[name=date]", "value": "2027-01-20"}),
             ("click", {"selector": "button[type=submit]"}),
         )
+
+        rename = ("click", {"selector": '[data-record="Probe sample"] button:first-of-type'})
+        remove = ("click", {"selector": '[data-record="Probe sample"] button:last-of-type'})
 
         def execute(job, browser):
             for index, (tool, arguments) in enumerate(actions):
                 self.assertIs(browser.invoke(f"op-{index}", "create", tool, arguments).outcome, Outcome.RETURNED)
             snapshot = browser.invoke("read", "create", "snapshot", {}, read_only=True)
             self.assertIn("Probe sample | 2027-01-20 | product", str(snapshot.raw))
+            self.assertIs(browser.invoke("rename", "update", *rename).outcome, Outcome.RETURNED)
+            updated = browser.invoke("read-update", "update", "snapshot", {}, read_only=True)
+            self.assertIn("Updated probe sample | 2027-01-20 | product", str(updated.raw))
+            self.assertIs(browser.invoke("delete", "delete", *remove).outcome, Outcome.RETURNED)
+            deleted = browser.invoke("read-delete", "delete", "snapshot", {}, read_only=True)
+            self.assertNotIn("Updated probe sample", str(deleted.raw))
+            self.assertIs(deleted.outcome, Outcome.RETURNED)
             return {"status": "completed"}
 
         with BrowseTransport(os.environ.get("QABRO_BROWSE", "browse")) as live:
@@ -53,7 +63,7 @@ class LiveProbeTests(unittest.TestCase):
                 self.assertTrue(run_next_probe(
                     queue, journal, foreground_busy=lambda: False, context="shared", transport=live,
                     redact=lambda value: value, execute=execute, prepare_tab=prepare,
-                    allow_action=lambda job, tool, args: (tool, args) in actions,
+                    allow_action=lambda job, tool, args: (tool, args) in (*actions, rename, remove),
                 ))
                 worker = live(worker_tab, "eval", {
                     "selector": "input[name=name]", "expression": "element => element.value",
