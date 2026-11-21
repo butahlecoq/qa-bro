@@ -12,3 +12,23 @@ The specification and implementation backlog are available. Development can star
 - [Delivery milestones](https://github.com/butahlecoq/qa-bro/milestones)
 
 Start with [baseline capture](https://github.com/butahlecoq/qa-bro/issues/1) and [the scenario and evidence contract](https://github.com/butahlecoq/qa-bro/issues/2). Each issue lists its prerequisites and acceptance criteria.
+
+## Local browser smoke test
+
+Start a browse relay paired with a dedicated Chromium profile and serve the fixture from the repository root.
+
+```sh
+python -m http.server 18765 --bind 127.0.0.1 --directory tests/fixtures
+```
+
+Run these commands in another terminal using the same browse relay configuration. Browse requires an explicit allowed origin for loopback navigation.
+
+```sh
+python -m qabro.browse_schema
+browse tabs --json '{"action":"new","id":"fixture-ok","allowedOrigins":["http://127.0.0.1:18765"]}'
+browse tabs --json '{"action":"new","id":"fixture-defect","allowedOrigins":["http://127.0.0.1:18765"]}'
+python -m qabro.baseline --database /tmp/qabro-smoke.sqlite --tab fixture-ok --url http://127.0.0.1:18765/requirements.html
+python -m qabro.baseline --database /tmp/qabro-smoke.sqlite --tab fixture-defect --url 'http://127.0.0.1:18765/requirements.html?wrong-category'
+```
+
+Expect `PASS` for the first run and `FAIL` for the second. Each run reports six browser calls and zero model calls. The runner uses fixed inputs for this transport check. Both results were verified with browse 0.1.5 and Chromium 155. The opencode agent baseline and corporate Pi integration are tracked in issue #1.
