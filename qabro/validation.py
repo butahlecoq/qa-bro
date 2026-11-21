@@ -10,6 +10,7 @@ from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Attempt, Observation, Verdict
 from qabro.jobs import Job
 from qabro.journal import Journal
+from qabro.runner import Recipe
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class HintCandidate:
     variants: frozenset[str]
     variable_inputs: bool
     capabilities: frozenset[str] = frozenset()
+    recipe: Recipe | None = None
 
     def __post_init__(self):
         if not self.variants or not self.hint.strip():
@@ -67,6 +69,8 @@ def publish_hint(
 ) -> bool:
     if not eligible(candidate, runs):
         return False
+    if candidate.recipe is not None:
+        raise ValueError("Recipe publication requires persisted validation evidence")
     catalog.seed_verified_hint(
         candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities
     )
@@ -150,7 +154,14 @@ def _validate_job(
     if len({run.attempt_id for run in runs}) != len(runs):
         accepted = False
     for run in runs:
-        entries = {event: payload for _, event, _, payload in journal.events(run.attempt_id)} if run.attempt_id else {}
+        events = journal.events(run.attempt_id) if run.attempt_id else []
+        entries = {event: payload for _, event, _, payload in events}
+        if candidate.recipe is not None and not any(
+            kind == "recipe_selected"
+            and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
+            for _, _, kind, payload in events
+        ):
+            accepted = False
         if entries.get("scenario:start", {}).get("contract_revision") != run.result.scenario.revision:
             accepted = False
         if entries.get("scenario:finish", {}).get("verdict") != Verdict.PASS:
@@ -175,7 +186,8 @@ def _validate_job(
             if pinned.rowcount != 1:
                 raise ValueError("Validation evidence expired before publication")
         catalog.publish_hint_in(
-            db, candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities,
+            db, candidate.ref, candidate.scope, candidate.hint,
+            capabilities=candidate.capabilities, recipe=candidate.recipe,
         )
 
     return catalog.jobs.complete(
