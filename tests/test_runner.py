@@ -99,3 +99,28 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
         self.assertEqual(attempt.completed_steps, ("open",))
         self.assertIn("budget_exhausted", [entry[2] for entry in journal.events("attempt")])
+
+    def test_budget_exhaustion_during_check_keeps_explicit_condition_results(self):
+        from qabro.budget import Budget
+
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        scenario = Scenario("Save, then close", (
+            Step("save", "Save", (Checkpoint("saved", "Saved"),)),
+            Step("close", "Close", (Checkpoint("closed", "Closed"),)),
+        ))
+        browser = BrowserCalls(
+            journal, "attempt", "shared", "tab",
+            lambda *_: {"content": [{"type": "text", "text": "returned"}]},
+            lambda value: value, budget=Budget(browser_calls=1, model_calls=0, seconds=10),
+        )
+
+        def observe(checkpoint):
+            browser.invoke("inspect", "save", "snapshot", {}, read_only=True)
+
+        attempt = run_scenario(scenario, browser, lambda _: Action("click", {}), observe)
+        self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
+        self.assertEqual(attempt.observations, {"saved": "unverified", "closed": "not_reached"})
+        self.assertEqual(journal.events("attempt")[-1][3]["verdict"], "INCONCLUSIVE")
