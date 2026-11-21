@@ -136,6 +136,8 @@ python -m qabro.pilot pilot.json > pilot-report.json
 
 A frozen export has `kind: "frozen"`, `training_workflows`, `learning` costs keyed by mode, and `trials`. Each trial has a `case` with `id`, `workflow` and `expected`, along with the trial's `mode`, `setup`, `verdict`, `elapsed_ns`, `worker_tokens` and measured `usage`. Use the same setup identifier for matched trials across all four modes. The identifier should pin model, data, browser and budgets. Report explorer and validation costs in `learning`. An optional `release` entry supplies `minimum_tokens_saved` and per-case `evidence` containing mandatory and reported condition IDs and the observed number of duplicate effects.
 
+To report skill break-even, add a `skills` object keyed by skill ID and revision. Each entry lists ordered `uses` with `case_id` and assisted `mode`, per-skill `learning` costs, and optional `maintenance_tokens`. Attribute a use only when the run actually reused the skill. Each use is paired with that case's baseline trial.
+
 An online export has `kind: "online"` and ordered `attempts`. Each entry includes `attempt_id`, `trial`, `available_revisions` as skill ID and revision pairs, and `learning_since_previous`. Set `final_learning` for costs incurred after the final attempt. Keep the online and frozen exports separate.
 
 Only use corporate Pi runs when reporting release or transfer results for corporate platforms. The local browser fixture verifies the reporting and evidence pipeline.

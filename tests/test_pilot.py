@@ -94,12 +94,20 @@ class PilotTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         case = Case("defect", "create", Verdict.FAIL)
-        trials = [Trial(case, mode, "same", Verdict.FAIL, 100, 20) for mode in Mode]
+        trials = [
+            Trial(case, mode, "same", Verdict.FAIL, 100, 10 if mode is Mode.RECIPES else 20)
+            for mode in Mode
+        ]
         directory = Path(self.enterContext(TemporaryDirectory()))
         manifest = directory / "pilot.json"
         manifest.write_text(json.dumps({
             "kind": "frozen", "trials": [asdict(trial) for trial in trials],
             "training_workflows": ["edit"], "learning": {},
+            "skills": {"create:1": {
+                "uses": [{"case_id": "defect", "mode": "recipes"}],
+                "learning": {"explorer_tokens": 2, "validation_tokens": 3},
+                "maintenance_tokens": 1,
+            }},
             "release": {
                 "minimum_tokens_saved": 1,
                 "evidence": {"defect": {
@@ -115,3 +123,5 @@ class PilotTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual(report["modes"]["hybrid"]["detected_defects"], 1)
         self.assertFalse(report["release"]["ready"])
+        self.assertEqual(report["skill_break_even"]["create:1"]["first_positive_use"], 1)
+        self.assertEqual(report["skill_break_even"]["create:1"]["net_saved_tokens"], 4)

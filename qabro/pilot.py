@@ -136,6 +136,8 @@ def skill_break_even(
     uses: list[SkillUse], cost: LearningCost, *, maintenance_tokens: int = 0,
 ) -> dict:
     """Report cumulative token savings for ordered, matched uses of one skill."""
+    if min(cost.explorer_tokens, cost.validation_tokens, maintenance_tokens) < 0:
+        raise ValueError("Skill investment must be nonnegative")
     investment = cost.explorer_tokens + cost.validation_tokens + maintenance_tokens
     net = -investment
     first_positive_use = None
@@ -300,6 +302,21 @@ def report_manifest(data: dict) -> dict:
     training = frozenset(data["training_workflows"])
     learning = {Mode(mode): _read_cost(row) for mode, row in data["learning"].items()}
     report = {"modes": frozen_catalog_report(trials, training, learning)}
+    if "skills" in data:
+        by_case_mode = {(trial.case.id, trial.mode): trial for trial in trials}
+        skills = {}
+        for skill, row in data["skills"].items():
+            keys = [(use["case_id"], Mode(use["mode"])) for use in row["uses"]]
+            if len(keys) != len(set(keys)):
+                raise ValueError(f"Duplicate reuse trial for {skill}")
+            uses = [
+                SkillUse(by_case_mode[(case, Mode.BASELINE)], by_case_mode[(case, mode)])
+                for case, mode in keys
+            ]
+            skills[skill] = skill_break_even(
+                uses, _read_cost(row["learning"]), maintenance_tokens=row.get("maintenance_tokens", 0),
+            )
+        report["skill_break_even"] = skills
     if "release" in data:
         release = data["release"]
         evidence = {
