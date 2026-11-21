@@ -32,3 +32,28 @@ python -m qabro.baseline --database /tmp/qabro-smoke.sqlite --tab fixture-defect
 ```
 
 Expect `PASS` for the first run and `FAIL` for the second. Each run reports six browser calls and zero model calls. The runner uses fixed inputs for this transport check. Both results were verified with browse 0.1.5 and Chromium 155. The opencode agent baseline and corporate Pi integration are tracked in issue #1.
+
+### OpenCode agent baseline
+
+Use a disposable Git workspace and the paired relay from the browser smoke test. OpenCode v2.3.0 reads the MCP configuration from that project's root.
+
+```sh
+project_root="$PWD"
+agent_workspace="$(mktemp -d)"
+git -C "$agent_workspace" init -q
+browse_path="$(command -v browse)"
+(
+  cd "$agent_workspace"
+  opencode mcp add browse -- "$browse_path" mcp
+  opencode --standalone run --archived --auto --format json \
+    -m opencode/deepseek-v4.1-flash-free \
+    'Use browse on http://127.0.0.1:18765/requirements.html. Open a fresh named tab qa-agent-fixture with allowedOrigins ["http://127.0.0.1:18765"]. Fill Name with Agent sample, Due date with 2027-01-20, select Operations, and click Create once. Verify that the created row is exactly Agent sample | 2027-01-20 | operations. Report PASS or FAIL and the observed row.' \
+    > baseline.jsonl
+)
+cd "$project_root"
+python -m qabro.opencode_metrics < "$agent_workspace/baseline.jsonl"
+```
+
+On the verified run the agent reported `PASS` with the exact expected row. The JSONL trace recorded ten completed model steps, nine OpenCode tool dispatches, and 31.2 seconds between the first and last events. OpenCode v2 exposes browser MCP tools through its `execute` dispatcher, so its dispatch count can differ from the number of individual browser calls.
+
+For the corporate Pi smoke test, use the existing authenticated harness with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage for one existing scenario. Verify that the references resolve locally and that the stored trace omits authentication material.
