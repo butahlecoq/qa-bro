@@ -20,6 +20,7 @@ def run_next_probe(
     redact: Callable[[object], object],
     execute: Callable[[Job, BrowserCalls], dict],
     clock: Callable[[], int] = time_ns,
+    recover: Callable[[Job, BrowserCalls], dict | None] | None = None,
 ) -> bool:
     """Use a stable attempt and dedicated tab for a host-configured probe."""
     if foreground_busy():
@@ -45,13 +46,19 @@ def run_next_probe(
         journal, attempt, context, tab, transport, redact, resources=tuple(resources),
         budget=Budget(browser_calls=20, model_calls=2, seconds=30),
     )
-    if journal.actions_to_reconcile(attempt):
-        return False
-    result = execute(job, browser)
-    if journal.actions_to_reconcile(attempt):
-        return False
-    if not queue.complete(job, result, now_ns=clock()):
-        return False
+    previous = {event: payload for _, event, _, payload in journal.events(attempt)}
+    result = previous.get("probe:result")
+    if result is None:
+        if "probe:started" in previous:
+            if recover is None:
+                return False
+            result = recover(job, browser)
+        else:
+            journal.append(attempt, "probe:started", "probe_started", {}, reserve=True)
+            result = execute(job, browser)
+        if result is None or journal.actions_to_reconcile(attempt):
+            return False
+        journal.append(attempt, "probe:result", "probe_result", result)
     journal.release_resources(attempt)
     journal.release_tab(context, tab, attempt)
-    return True
+    return queue.complete(job, result, now_ns=clock())

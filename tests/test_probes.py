@@ -39,3 +39,33 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(calls[0][0].startswith("probe-"))
         self.assertFalse(journal.claim_tab("shared", "worker-tab", "probe:one"))
         self.assertTrue(journal.claim_resources("worker", ("record:test",)))
+
+    def test_expired_probe_recovers_without_executing_mutation_again(self):
+        from qabro.recovery import Effect, reconcile
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, queue = Journal(path), JobQueue(path)
+        queue.enqueue("one", "probe", {"resources": ["fixture:probe-record"]})
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(tool)
+            if tool == "click":
+                raise TimeoutError()
+            return {"content": [{"type": "text", "text": "probe record present"}]}
+
+        def execute(job, browser):
+            browser.invoke("create", "probe", "click", {})
+            return {"status": "completed"}
+
+        def recover(job, browser):
+            effect = reconcile(browser, "create", "fresh", "snapshot", {}, lambda _: Effect.COMPLETED)
+            return {"status": "completed"} if effect is Effect.COMPLETED else None
+
+        args = {"context": "shared", "transport": transport, "foreground_busy": lambda: False,
+                "redact": lambda value: value, "execute": execute, "recover": recover}
+        with self.assertRaises(TimeoutError):
+            run_next_probe(queue, journal, **args, clock=lambda: 0)
+        self.assertTrue(run_next_probe(JobQueue(path), Journal(path), **args, clock=lambda: 60_000_000_000))
+        self.assertEqual(calls, ["click", "snapshot"])
+        self.assertIsNone(queue.claim("probe", now_ns=120_000_000_000, lease_ns=1))
