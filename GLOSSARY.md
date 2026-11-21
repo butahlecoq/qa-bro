@@ -1,7 +1,5 @@
-# Навыки работы с UI
+# UI skills
 
-## Термины
+**Expected result** — A condition explicitly stated in the source test scenario for evaluating application behavior. A step can have no expected result.
 
-**Ожидаемый результат** — явно заданное в тестовом сценарии условие, по которому оценивают поведение приложения. У шага может не быть ожидаемого результата.
-
-**Навык** — проверенное знание о том, как выполнить операцию в определённом контексте UI. Навык может состоять из подсказки или включать исполняемый рецепт.
+**Skill** — Verified knowledge of how to perform an operation in a specific UI context. A skill can consist of a hint or include an executable recipe.
