@@ -60,15 +60,48 @@ class RecipeStep:
 
 
 @dataclass(frozen=True)
+class RecipeCall:
+    id: str
+    revision: str
+
+
+@dataclass(frozen=True)
 class Recipe:
     id: str
     revision: str
-    steps: tuple[RecipeStep, ...]
+    steps: tuple[RecipeStep | RecipeCall, ...]
 
     def __post_init__(self):
         if not self.steps:
             raise ValueError("A recipe must implement at least one source step")
 
+
+
+def expand_recipe(
+    recipe: Recipe,
+    load: Callable[[str, str], Recipe | None] | None,
+    limit: int,
+) -> tuple[RecipeStep, ...]:
+    """Resolve immutable nested revisions with a bounded, acyclic expansion."""
+    steps = []
+
+    def visit(current: Recipe, parents: frozenset[tuple[str, str]]) -> None:
+        identity = (current.id, current.revision)
+        if identity in parents or len(parents) >= 32:
+            raise ValueError("Cyclic or excessively nested recipe")
+        for node in current.steps:
+            if isinstance(node, RecipeStep):
+                if len(steps) >= limit:
+                    raise ValueError("Recipe exceeds the remaining source steps")
+                steps.append(node)
+                continue
+            nested = load(node.id, node.revision) if load else None
+            if nested is None or (nested.id, nested.revision) != (node.id, node.revision):
+                raise ValueError("Pinned nested recipe revision is unavailable")
+            visit(nested, parents | {identity})
+
+    visit(recipe, frozenset())
+    return tuple(steps)
 
 
 def run_scenario(
@@ -109,10 +142,11 @@ def run_scenario(
         recipe = load_recipe(payload["id"], payload["revision"]) if load_recipe else None
         if recipe is None or (recipe.id, recipe.revision) != (payload["id"], payload["revision"]):
             raise ValueError("The pinned recipe is unavailable for resume")
-        covered = tuple(item.source for item in recipe.steps)
+        expanded = expand_recipe(recipe, load_recipe, len(scenario.steps) - index)
+        covered = tuple(item.source for item in expanded)
         if covered != scenario.steps[index:index + len(covered)] or bindings is None:
             raise ValueError("The pinned recipe cannot resume this scenario")
-        planned.update(enumerate(recipe.steps, start=index))
+        planned.update(enumerate(expanded, start=index))
     cause = Cause.UNKNOWN
     blocked = False
     try:
@@ -130,9 +164,10 @@ def run_scenario(
                 if index not in planned and choose is not None and applicable is not None and bindings is not None:
                     recipe = choose(step)
                     if recipe is not None:
-                        covered = tuple(item.source for item in recipe.steps)
+                        expanded = expand_recipe(recipe, load_recipe, len(scenario.steps) - index)
+                        covered = tuple(item.source for item in expanded)
                         if covered == scenario.steps[index:index + len(covered)] and applicable(recipe):
-                            planned.update(enumerate(recipe.steps, start=index))
+                            planned.update(enumerate(expanded, start=index))
                             journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
                                 "id": recipe.id, "revision": recipe.revision,
                                 "steps": [item.id for item in covered],

@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 
 from qabro.contract import Checkpoint, Step
-from qabro.runner import Parameter, Recipe, RecipeStep
+from qabro.runner import Parameter, Recipe, RecipeCall, RecipeStep
 
 
 def encode_recipe(recipe: Recipe) -> str:
@@ -15,6 +15,9 @@ def decode_recipe(encoded: str) -> Recipe:
     data = json.loads(encoded)
     steps = []
     for entry in data["steps"]:
+        if "source" not in entry:
+            steps.append(RecipeCall(**entry))
+            continue
         source = entry["source"]
         checkpoints = tuple(Checkpoint(**check) for check in source["checkpoints"])
         arguments = tuple(
