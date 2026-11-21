@@ -1,10 +1,11 @@
 """Run one queued background UI probe when foreground work permits."""
 
 from collections.abc import Callable
+from enum import StrEnum
 from hashlib import sha256
 from time import time_ns
 
-from qabro.browser import BrowserCalls
+from qabro.browser import BrowserCalls, Outcome, ToolResult
 from qabro.budget import Budget
 from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
@@ -66,3 +67,36 @@ def run_next_probe(
         job, result, now_ns=clock(),
         finalize=lambda db: journal.finish_probe_in(db, attempt, context, tab),
     )
+
+
+class Interruption(StrEnum):
+    CONFIRM = "confirm"
+    DENIED = "denied"
+    EXPIRED_AUTH = "expired_auth"
+    HANDOFF = "handoff"
+
+
+def handle_interruption(
+    browser: BrowserCalls,
+    *,
+    step: str,
+    evidence_id: str,
+    observed: Interruption,
+    expected_denial: bool = False,
+    confirm: Callable[[], ToolResult] | None = None,
+) -> dict:
+    """Handle an interruption identified by the host's UI observation policy."""
+    if not evidence_id:
+        raise ValueError("An interruption requires an evidence reference")
+    browser.journal.append(browser.attempt, f"{step}:interruption", "probe_interruption", {
+        "step": step, "observed": observed, "evidence_id": evidence_id,
+    }, authorize=browser.authorize)
+    if observed is Interruption.CONFIRM:
+        if confirm is None:
+            return {"status": "inconclusive", "reason": "confirmation_not_configured"}
+        result = confirm()
+        status = "confirmed" if result.outcome is Outcome.RETURNED else "inconclusive"
+        return {"status": status, "reason": observed}
+    if observed is Interruption.DENIED and expected_denial:
+        return {"status": "expected_denial", "reason": observed}
+    return {"status": "blocked", "reason": observed}

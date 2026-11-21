@@ -89,3 +89,31 @@ class ProbeTests(unittest.TestCase):
                 transport=lambda *_: self.fail("Stale call reached browser"),
                 redact=lambda value: value, execute=execute, clock=lambda: now,
             )
+
+    def test_only_routine_confirmation_calls_the_confirm_action(self):
+        from qabro.browser import BrowserCalls, Outcome, ToolResult
+        from qabro.probes import Interruption, handle_interruption
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("probe", "run", "explorer")
+        browser = BrowserCalls(journal, "probe", "shared", "tab", lambda *_: {}, lambda value: value)
+        confirmations = []
+
+        def confirm():
+            confirmations.append(True)
+            return ToolResult(Outcome.RETURNED, {})
+
+        cases = [
+            (Interruption.CONFIRM, False, "confirmed"),
+            (Interruption.DENIED, True, "expected_denial"),
+            (Interruption.DENIED, False, "blocked"),
+            (Interruption.EXPIRED_AUTH, False, "blocked"),
+            (Interruption.HANDOFF, False, "blocked"),
+        ]
+        for index, (observed, expected, status) in enumerate(cases):
+            result = handle_interruption(browser, step=str(index), evidence_id=f"snapshot-{index}",
+                                         observed=observed, expected_denial=expected, confirm=confirm)
+            self.assertEqual(result["status"], status)
+        self.assertEqual(confirmations, [True])
+        self.assertEqual(len(journal.events("probe")), len(cases))
