@@ -22,7 +22,12 @@
   const form = document.querySelector("form");
   const status = document.querySelector('[role="status"]');
   const list = document.querySelector("ul");
-  const defective = new URLSearchParams(location.search).has("wrong-category");
+  const flags = new URLSearchParams(location.search);
+  const defective = flags.has("wrong-category");
+  if (flags.has("reverse-categories")) {
+    const categories = form.elements.category;
+    categories.append(categories.options[0]);
+  }
   form.addEventListener("submit", event => {
     event.preventDefault();
     const data = new FormData(form);

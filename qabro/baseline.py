@@ -76,7 +76,10 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
             snapshot = "\n".join(
                 item.get("text", "") for item in result.raw["content"] if item["type"] == "text"
             )
-            expected = "Baseline sample | 2027-01-20 | operations"
+            selected = bindings.use("category")
+            if not isinstance(selected, Option):
+                return None
+            expected = f"Baseline sample | 2027-01-20 | {selected.id}"
             return Evidence(monotonic_ns(), result.artifact_id, expected in snapshot)
 
         def read_options(key):
