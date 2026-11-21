@@ -264,3 +264,67 @@ def online_learning_report(
         "validation_tokens": validation_tokens,
         "total_tokens": worker_tokens + explorer_tokens + validation_tokens,
     }
+
+
+def _read_trial(row: dict) -> Trial:
+    case = row["case"]
+    return Trial(
+        Case(case["id"], case["workflow"], Verdict(case["expected"])),
+        Mode(row["mode"]), row["setup"], Verdict(row["verdict"]),
+        row["elapsed_ns"], row["worker_tokens"], Usage(**row.get("usage", {})),
+    )
+
+
+def _read_cost(row: dict) -> LearningCost:
+    return LearningCost(
+        row.get("explorer_tokens", 0), row.get("validation_tokens", 0),
+        Usage(**row.get("explorer_usage", {})), Usage(**row.get("validation_usage", {})),
+    )
+
+
+def report_manifest(data: dict) -> dict:
+    """Build a report from a completed pilot export without reading raw UI traces."""
+    if data["kind"] == "online":
+        attempts = [
+            OnlineAttempt(
+                row["attempt_id"], _read_trial(row["trial"]),
+                tuple(tuple(ref) for ref in row["available_revisions"]),
+                _read_cost(row["learning_since_previous"]),
+            )
+            for row in data["attempts"]
+        ]
+        return online_learning_report(attempts, final_learning=_read_cost(data.get("final_learning", {})))
+    if data["kind"] != "frozen":
+        raise ValueError("Pilot kind must be frozen or online")
+    trials = [_read_trial(row) for row in data["trials"]]
+    training = frozenset(data["training_workflows"])
+    learning = {Mode(mode): _read_cost(row) for mode, row in data["learning"].items()}
+    report = {"modes": frozen_catalog_report(trials, training, learning)}
+    if "release" in data:
+        release = data["release"]
+        evidence = {
+            case: ReleaseEvidence(
+                frozenset(row["mandatory_condition_ids"]), frozenset(row["reported_condition_ids"]),
+                row["duplicate_effects"],
+            )
+            for case, row in release["evidence"].items()
+        }
+        report["release"] = release_report(
+            trials, training, learning, evidence, minimum_tokens_saved=release["minimum_tokens_saved"],
+        )
+    return report
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", type=Path)
+    args = parser.parse_args()
+    try:
+        result = report_manifest(json.loads(args.manifest.read_text()))
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        parser.error(str(error))
+    print(json.dumps(result, indent=2, allow_nan=False))

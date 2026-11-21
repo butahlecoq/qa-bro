@@ -84,3 +84,34 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(report["total_tokens"], 225)
         with self.assertRaises(ValueError):
             online_learning_report([first, first])
+
+    def test_pilot_command_reads_a_frozen_export(self):
+        import json
+        import subprocess
+        import sys
+        from dataclasses import asdict
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        case = Case("defect", "create", Verdict.FAIL)
+        trials = [Trial(case, mode, "same", Verdict.FAIL, 100, 20) for mode in Mode]
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        manifest = directory / "pilot.json"
+        manifest.write_text(json.dumps({
+            "kind": "frozen", "trials": [asdict(trial) for trial in trials],
+            "training_workflows": ["edit"], "learning": {},
+            "release": {
+                "minimum_tokens_saved": 1,
+                "evidence": {"defect": {
+                    "mandatory_condition_ids": ["saved"], "reported_condition_ids": ["saved"],
+                    "duplicate_effects": 0,
+                }},
+            },
+        }))
+        result = subprocess.run(
+            [sys.executable, "-m", "qabro.pilot", str(manifest)],
+            check=True, text=True, capture_output=True,
+        )
+        report = json.loads(result.stdout)
+        self.assertEqual(report["modes"]["hybrid"]["detected_defects"], 1)
+        self.assertFalse(report["release"]["ready"])

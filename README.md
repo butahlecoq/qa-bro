@@ -125,3 +125,17 @@ Run the paired trial with the same relay and fixture as the smoke test. Set `QAB
 QABRO_FIXTURE_URL=http://127.0.0.1:18765/requirements.html \
   python -m unittest discover -s tests -p test_live_compiled_browser.py -v
 ```
+
+## Report a pilot
+
+Run the reporting command inside the environment that ran the pilot.
+
+```sh
+python -m qabro.pilot pilot.json > pilot-report.json
+```
+
+A frozen export has `kind: "frozen"`, `training_workflows`, `learning` costs keyed by mode, and `trials`. Each trial has a `case` with `id`, `workflow` and `expected`, along with the trial's `mode`, `setup`, `verdict`, `elapsed_ns`, `worker_tokens` and measured `usage`. Use the same setup identifier for matched trials across all four modes. The identifier should pin model, data, browser and budgets. Report explorer and validation costs in `learning`. An optional `release` entry supplies `minimum_tokens_saved` and per-case `evidence` containing mandatory and reported condition IDs and the observed number of duplicate effects.
+
+An online export has `kind: "online"` and ordered `attempts`. Each entry includes `attempt_id`, `trial`, `available_revisions` as skill ID and revision pairs, and `learning_since_previous`. Set `final_learning` for costs incurred after the final attempt. Keep the online and frozen exports separate.
+
+Only use corporate Pi runs when reporting release or transfer results for corporate platforms. The local browser fixture verifies the reporting and evidence pipeline.
