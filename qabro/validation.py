@@ -2,8 +2,10 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from sqlite3 import Connection
 from time import time_ns
 
+from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Attempt, Verdict
 
@@ -31,6 +33,7 @@ class ValidationRun:
     dataset_id: str
     variant: str
     result: Attempt
+    evidence: tuple[tuple[str, str], ...] = ()
 
 
 def eligible(candidate: HintCandidate, runs: tuple[ValidationRun, ...]) -> bool:
@@ -84,12 +87,31 @@ def validate_next_hint(
         draft["hint"], frozenset(draft["variants"]), draft["variable_inputs"],
     )
     runs = validate(candidate)
+    store = ArtifactStore(catalog.path)
+    references = set()
     accepted = eligible(candidate, runs)
-    return queue.complete(
-        job, {"published": accepted, "sessions": [run.session_id for run in runs]},
-        now_ns=clock(), finalize=(
-            lambda db: catalog.publish_hint_in(
-                db, candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities,
+    for run in runs:
+        required = {check.id for check in run.result.scenario.checkpoints if check.required}
+        evidence = dict(run.evidence)
+        if not required <= evidence.keys():
+            accepted = False
+        references.update(evidence.values())
+    accepted = accepted and all(store.get(ref) is not None for ref in references)
+
+    def publish(db: Connection) -> None:
+        for reference in sorted(references):
+            pinned = db.execute(
+                "INSERT INTO artifact_pins SELECT ?, id FROM artifacts WHERE id=?",
+                (f"{candidate.ref.id}:{candidate.ref.revision}", reference),
             )
-        ) if accepted else None,
+            if pinned.rowcount != 1:
+                raise ValueError("Validation evidence expired before publication")
+        catalog.publish_hint_in(
+            db, candidate.ref, candidate.scope, candidate.hint, capabilities=candidate.capabilities,
+        )
+
+    return queue.complete(
+        job, {"published": accepted, "sessions": [run.session_id for run in runs],
+              "evidence": sorted(references)},
+        now_ns=clock(), finalize=publish if accepted else None,
     )

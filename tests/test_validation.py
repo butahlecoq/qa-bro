@@ -32,6 +32,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.load_hint("after", ref), candidate.hint)
 
     def test_queue_publishes_only_after_validation_and_keeps_existing_pin(self):
+        from qabro.artifacts import ArtifactStore
         from qabro.validation import validate_next_hint
 
         path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
@@ -43,13 +44,15 @@ class ValidationTests(unittest.TestCase):
         }
         catalog.jobs.enqueue("example", "validate_hint", draft)
         catalog.pin("before")
+        store = ArtifactStore(path)
+        artifacts = [store.put(f"snapshot {index}".encode(), now=1) for index in range(3)]
 
         def validate(candidate):
             step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
             scenario = Scenario("Open menu", (step,))
             result = Attempt(scenario, ("open",), {"options": Observation.MATCH})
             return tuple(ValidationRun(candidate.ref, scope, str(index), str(index),
-                                       "fixed", "open", result) for index in range(3))
+                                       "fixed", "open", result, (("options", artifacts[index]),)) for index in range(3))
 
         self.assertTrue(validate_next_hint(catalog, validate, clock=lambda: 1))
         self.assertFalse(validate_next_hint(catalog, validate, clock=lambda: 2))
@@ -57,3 +60,5 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.search("before", "category", scope, frozenset()), [])
         ref, = catalog.search("after", "category", scope, frozenset())
         self.assertEqual(catalog.load_hint("after", ref), draft["hint"])
+        store.prune(before=99, max_bytes=0)
+        self.assertTrue(all(store.get(artifact) for artifact in artifacts))
