@@ -30,6 +30,7 @@ class LiveValidationTests(unittest.TestCase):
         catalog, journal, store = Catalog(path), Journal(path), ArtifactStore(path)
         scope = Scope("fixture", "select", "requirements", "editor")
         hint = "Choose a category by option value."
+        wrong_hint = "Always choose Product."
         catalog.jobs.enqueue("category", "validate_hint", {
             "scope": vars(scope), "summary": "Choose category", "hint": hint,
             "variants": ["select"], "variable_inputs": True,
@@ -48,9 +49,10 @@ class LiveValidationTests(unittest.TestCase):
                         Checkpoint("selected", f"{category.title()} is selected"),
                     )),
                 ))
+                selected_value = "product" if candidate.hint == wrong_hint else category
                 actions = {
                     "open": Action("navigate", {"url": url}),
-                    "select": Action("select", {"selector": "select[name=category]", "values": [category]}),
+                    "select": Action("select", {"selector": "select[name=category]", "values": [selected_value]}),
                 }
                 artifacts = []
                 with BrowseTransport(executable) as live:
@@ -81,3 +83,11 @@ class LiveValidationTests(unittest.TestCase):
         self.assertEqual(catalog.search("before", "category", scope, frozenset()), [])
         ref, = catalog.search("after", "category", scope, frozenset())
         self.assertEqual(catalog.load_hint("after", ref), hint)
+
+        catalog.jobs.enqueue("wrong-category", "validate_hint", {
+            "scope": vars(scope), "summary": "Choose category", "hint": wrong_hint,
+            "variants": ["select"], "variable_inputs": True,
+        })
+        self.assertTrue(validate_next_hint(catalog, validate))
+        catalog.pin("after-rejection")
+        self.assertEqual(catalog.search("after-rejection", "category", scope, frozenset()), [ref])
