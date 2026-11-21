@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from time import monotonic_ns
 
+from qabro.budget import Budget
 from qabro.journal import Journal
 
 
@@ -47,6 +48,8 @@ class BrowserCalls:
         tab: str,
         call: Callable[[str, str, dict], object],
         redact: Callable[[object], object],
+        *,
+        budget: Budget | None = None,
     ):
         self.journal = journal
         self.attempt = attempt
@@ -54,8 +57,11 @@ class BrowserCalls:
         self.tab = tab
         self.call = call
         self.redact = redact
+        self.budget = budget
 
     def invoke(self, action: str, step: str, tool: str, arguments: dict) -> ToolResult:
+        if self.budget is not None:
+            self.budget.consume("browser")
         self.journal.append(
             self.attempt, f"{action}:start", "tool_start",
             {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments)},

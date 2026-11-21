@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from time import monotonic_ns, sleep
 
 from qabro.bindings import AttemptBindings, Option
+from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
@@ -85,6 +86,9 @@ def run_scenario(
         opened = monotonic_ns()
         try:
             result = browser.invoke(f"step-{index}", step.id, action.tool, action.arguments)
+        except BudgetExhausted as error:
+            journal.append(attempt_id, "scenario:budget", "budget_exhausted", {"reason": str(error)})
+            break
         except TimeoutError:
             break
         if result.outcome is not Outcome.RETURNED:

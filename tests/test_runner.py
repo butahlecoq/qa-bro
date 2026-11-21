@@ -72,3 +72,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(calls, [("type", {"text": "Example"})])
         self.assertEqual(attempt.verdict, Verdict.FAIL)
         self.assertIn("recipe_selected", [entry[2] for entry in journal.events("attempt")])
+
+    def test_browser_budget_applies_across_dispatchers_and_stops_scenario(self):
+        from qabro.budget import Budget
+
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(tool)
+            return {"content": [{"type": "text", "text": "returned"}]}
+
+        budget = Budget(browser_calls=2, model_calls=1, seconds=10)
+        args = (journal, "attempt", "shared", "tab", transport, lambda value: value)
+        helper = BrowserCalls(*args, budget=budget)
+        helper.invoke("initial", "open", "snapshot", {})
+        browser = BrowserCalls(*args, budget=budget)
+        scenario = Scenario("Open, save", (Step("open", "Open"), Step("save", "Save")))
+        attempt = run_scenario(
+            scenario, browser, lambda step: Action("click", {}), lambda check: None,
+        )
+        self.assertEqual(calls, ["snapshot", "click"])
+        self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
+        self.assertEqual(attempt.completed_steps, ("open",))
+        self.assertIn("budget_exhausted", [entry[2] for entry in journal.events("attempt")])
