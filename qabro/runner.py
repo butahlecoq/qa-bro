@@ -1,7 +1,9 @@
 """Run a source scenario through the shared browser call boundary."""
 
+import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from hashlib import sha256
 from time import monotonic_ns, sleep
 
 from qabro.bindings import AttemptBindings, Option, Options, UnresolvedBinding
@@ -96,6 +98,11 @@ class Recipe:
             raise ValueError("A recipe must implement at least one source step")
 
 
+    @property
+    def fingerprint(self) -> str:
+        return sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+
+
 
 def expand_recipe(
     recipe: Recipe,
@@ -165,6 +172,8 @@ def run_scenario(
             raise ValueError("The pinned recipe is unavailable for resume")
         expanded = expand_recipe(recipe, load_recipe, len(scenario.steps) - index)
         covered = tuple(item.source for item in expanded)
+        if payload.get("fingerprint") != recipe.fingerprint:
+            raise ValueError("The pinned recipe content changed")
         if covered != scenario.steps[index:index + len(covered)] or bindings is None:
             raise ValueError("The pinned recipe cannot resume this scenario")
         planned.update(enumerate(expanded, start=index))
@@ -190,7 +199,7 @@ def run_scenario(
                         if covered == scenario.steps[index:index + len(covered)] and applicable(recipe):
                             planned.update(enumerate(expanded, start=index))
                             journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
-                                "id": recipe.id, "revision": recipe.revision,
+                                "id": recipe.id, "revision": recipe.revision, "fingerprint": recipe.fingerprint,
                                 "steps": [item.id for item in covered],
                             })
                 if index in planned and bindings is not None:

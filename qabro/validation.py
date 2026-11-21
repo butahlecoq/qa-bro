@@ -164,6 +164,7 @@ def _validate_job(
         if candidate.recipe is not None and not any(
             kind == "recipe_selected"
             and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
+            and payload.get("fingerprint") == candidate.recipe.fingerprint
             for _, _, kind, payload in events
         ):
             accepted = False
