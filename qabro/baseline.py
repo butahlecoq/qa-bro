@@ -8,7 +8,7 @@ from time import monotonic_ns
 from uuid import uuid4
 
 from qabro.artifacts import ArtifactStore
-from qabro.bindings import AttemptBindings, Literal, Select
+from qabro.bindings import AttemptBindings, Literal, Option, Select
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.browser import BrowserCalls, Outcome
 from qabro.browse_transport import BrowseTransport
@@ -32,13 +32,18 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         "open": Action("navigate", {"url": url}),
         "name": Action("fill", {"selector": "input[name=name]", "value": "Baseline sample"}),
         "date": Action("fill", {"selector": "input[name=date]", "value": "2027-01-20"}),
-        "category": Action("select", {"selector": "select[name=category]", "values": ["operations"]}),
+        "category": Action("select", {"selector": "select[name=category]", "by": "value"}),
         "create": Action("click", {"selector": "button[type=submit]"}),
     }
     checkpoint = Checkpoint("saved", "The created row has the supplied name, date and category")
-    scenario = Scenario("Open, fill name and due date, select category, and create.", tuple(
-        Step(key, key, (checkpoint,) if key == "create" else ()) for key in commands
+    scenario = Scenario("Open, fill name and due date, select the last category, and create.", tuple(
+        Step(key, "Select the last category" if key == "category" else key, (checkpoint,) if key == "create" else ()) for key in commands
     ))
+    bindings = AttemptBindings({
+        "name": Literal(commands["name"].arguments["value"]),
+        "date": Literal(commands["date"].arguments["value"]),
+        "category": Select(last=True),
+    }, seed=0, base_time=datetime.now(UTC))
     recipe_options = {}
     if replay:
         catalog = Catalog(database)
@@ -56,16 +61,9 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         recipe_options = {
             "choose": lambda step: skills.select_recipe(step, lambda _, refs: refs[0]),
             "applicable": lambda _: True,
-            "bindings": AttemptBindings(
-                {
-                    "name": Literal(commands["name"].arguments["value"]),
-                    "date": Literal(commands["date"].arguments["value"]),
-                    "category": Select(last=True),
-                },
-                seed=0, base_time=datetime.now(UTC),
-            ),
+            "bindings": bindings,
         }
-    budget = Budget(browser_calls=7 if replay else 6, model_calls=0, seconds=30)
+    budget = Budget(browser_calls=7, model_calls=0, seconds=30)
     with BrowseTransport(executable, budget=budget) as transport:
         # The fixture uses synthetic values in a dedicated browser context.
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
@@ -81,13 +79,21 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
             expected = "Baseline sample | 2027-01-20 | operations"
             return Evidence(monotonic_ns(), result.artifact_id, expected in snapshot)
 
-        if replay:
-            recipe_options["read_options"] = lambda _: read_native_options(
-                browser, "category-options", "category", "select[name=category]",
-            )
+        def read_options(key):
+            return read_native_options(browser, "category-options", "category", "select[name=category]")
 
+        def resolve(step: Step) -> Action:
+            action = commands[step.id]
+            if step.id != "category":
+                return action
+            selected = bindings.resolve("category", read_options)
+            assert isinstance(selected, Option)
+            return Action(action.tool, {**action.arguments, "values": selected.id})
+
+        if replay:
+            recipe_options["read_options"] = read_options
         started = monotonic_ns()
-        result = run_scenario(scenario, browser, lambda step: commands[step.id], observe, **recipe_options)
+        result = run_scenario(scenario, browser, resolve, observe, **recipe_options)
         elapsed = monotonic_ns() - started
         journal.release_tab("fixture", tab, attempt)
         events = journal.events(attempt)

@@ -31,7 +31,7 @@ python -m qabro.baseline --database /tmp/qabro-smoke.sqlite --tab fixture-ok --u
 python -m qabro.baseline --database /tmp/qabro-smoke.sqlite --tab fixture-defect --url 'http://127.0.0.1:18765/requirements.html?wrong-category'
 ```
 
-Expect `PASS` for the first run and `FAIL` for the second. Each run reports six browser calls and zero model calls. The runner uses fixed inputs for this transport check. Both results were verified with browse 0.1.5 and Chromium 155. The opencode agent baseline and corporate Pi integration are tracked in issue #1.
+Expect `PASS` for the first run and `FAIL` for the second. Each run reports seven browser calls and zero model calls. The runner uses fixed inputs for this transport check. Both results were verified with browse 0.1.5 and Chromium 155. The opencode agent baseline and corporate Pi integration are tracked in issue #1.
 
 ### OpenCode agent baseline
 
