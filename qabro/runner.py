@@ -62,6 +62,7 @@ def run_scenario(
     max_actions: int | None = None,
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
+    load_recipe: Callable[[str, str], Recipe | None] | None = None,
 ) -> Attempt:
     """Execute each source step and stop on a failed or unverified required check."""
     journal = browser.journal
@@ -80,6 +81,17 @@ def run_scenario(
     observations = {}
     artifacts = {}
     planned: dict[int, RecipeStep] = {}
+    for event, payload in saved.items():
+        if not event.startswith("recipe:"):
+            continue
+        index = int(event.removeprefix("recipe:"))
+        recipe = load_recipe(payload["id"], payload["revision"]) if load_recipe else None
+        if recipe is None or (recipe.id, recipe.revision) != (payload["id"], payload["revision"]):
+            raise ValueError("The pinned recipe is unavailable for resume")
+        covered = tuple(item.source for item in recipe.steps)
+        if covered != scenario.steps[index:index + len(covered)] or bindings is None:
+            raise ValueError("The pinned recipe cannot resume this scenario")
+        planned.update(enumerate(recipe.steps, start=index))
     try:
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:

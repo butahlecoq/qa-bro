@@ -148,3 +148,39 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(attempt.verdict, Verdict.PASS)
         events = [event for _, event, kind, _ in journal.events("attempt") if kind == "tool_start"]
         self.assertEqual(events, ["step-0:start", "saved:sample:0:start", "saved:sample:1:start"])
+
+    def test_resume_loads_the_pinned_recipe_for_remaining_steps(self):
+        from datetime import UTC, datetime
+
+        from qabro.bindings import AttemptBindings
+        from qabro.runner import Recipe, RecipeStep
+
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        first, second = Step("first", "Open"), Step("second", "Save")
+        scenario = Scenario("Open and save", (first, second))
+        recipe = Recipe("form", "1", (RecipeStep(first, "open", ()), RecipeStep(second, "save", ())))
+        browser = BrowserCalls(journal, "attempt", "shared", "tab",
+                               lambda *_: {"content": [{"type": "text", "text": "ok"}]},
+                               lambda value: value)
+        bindings = AttemptBindings({}, seed=1, base_time=datetime.now(UTC))
+        append = journal.append
+
+        def interrupt(attempt, event, *args, **kwargs):
+            if event == "step-1:window":
+                raise KeyboardInterrupt()
+            return append(attempt, event, *args, **kwargs)
+
+        journal.append = interrupt
+        with self.assertRaises(KeyboardInterrupt):
+            run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
+                         choose=lambda _: recipe, applicable=lambda _: True, bindings=bindings)
+        browser.journal = Journal(journal.path)
+        with self.assertRaisesRegex(ValueError, "pinned recipe"):
+            run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
+                         bindings=bindings, resume=True)
+        result = run_scenario(scenario, browser, lambda _: self.fail(), lambda *_: None,
+                              bindings=bindings, resume=True, load_recipe=lambda *_: recipe)
+        self.assertEqual(result.verdict, Verdict.PASS)
