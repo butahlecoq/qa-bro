@@ -146,6 +146,18 @@ def validate_next_transfer(
     return _validate_job(catalog, job, candidate, validate, clock)
 
 
+def _recipe_steps_observed(selection: str, payload: dict, entries: dict) -> bool:
+    index = int(selection.removeprefix("recipe:"))
+    for offset, step in enumerate(payload["steps"]):
+        action_id = f"step-{index + offset}"
+        recorded = entries.get(f"{action_id}:recipe")
+        if recorded != {"step": step, "action": action_id}:
+            return False
+        if entries.get(f"{action_id}:finish", {}).get("outcome") != "returned":
+            return False
+    return bool(payload["steps"])
+
+
 def _validate_job(
     catalog: Catalog, job: Job, candidate: HintCandidate,
     validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
@@ -165,7 +177,8 @@ def _validate_job(
             kind == "recipe_selected"
             and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
             and payload.get("fingerprint") == candidate.recipe.fingerprint
-            for _, _, kind, payload in events
+            and _recipe_steps_observed(event, payload, entries)
+            for _, event, kind, payload in events
         ):
             accepted = False
         if entries.get("scenario:start", {}).get("contract_revision") != run.result.scenario.revision:

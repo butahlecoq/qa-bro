@@ -222,6 +222,9 @@ def run_scenario(
                         action = resolve(step)
                     else:
                         action = item.resolve(bindings, read_options, branch_value=branch_value)
+                        journal.append(attempt_id, f"{action_id}:recipe", "recipe_action", {
+                            "step": step.id, "action": action_id,
+                        })
                 else:
                     action = resolve(step)
                 opened = saved.get(f"{action_id}:window", {}).get("opened_ns", monotonic_ns())
