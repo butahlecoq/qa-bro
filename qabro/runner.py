@@ -58,6 +58,7 @@ def run_scenario(
     applicable: Callable[[Recipe], bool] | None = None,
     bindings: AttemptBindings | None = None,
     max_actions: int | None = None,
+    recover: Callable[[str, Step], None] | None = None,
 ) -> Attempt:
     """Execute each source step and stop on a failed or unverified required check."""
     journal = browser.journal
@@ -86,9 +87,24 @@ def run_scenario(
                         })
             action = planned[index].resolve(bindings) if index in planned and bindings is not None else resolve(step)
             opened = monotonic_ns()
-            result = browser.invoke(f"step-{index}", step.id, action.tool, action.arguments)
-            if result.outcome is not Outcome.RETURNED:
-                break
+            action_id = f"step-{index}"
+            try:
+                result = browser.invoke(action_id, step.id, action.tool, action.arguments)
+            except TimeoutError:
+                if recover is None:
+                    raise
+                result = None
+            if result is None or result.outcome is not Outcome.RETURNED:
+                if recover is None:
+                    break
+                recover(action_id, step)
+                recovered = any(
+                    event == f"{action_id}:reconciled" and kind == "reconciliation"
+                    and payload.get("effect") == "completed" and payload.get("probe_event_id")
+                    for _, event, kind, payload in journal.events(attempt_id)
+                )
+                if not recovered:
+                    break
             completed.append(step.id)
             for checkpoint in step.checkpoints:
                 window = CheckWindow(checkpoint, opened)

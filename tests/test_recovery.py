@@ -38,3 +38,36 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(records, ["requirement-1"])
         self.assertEqual(journal.actions_to_reconcile("attempt"), [])
         self.assertEqual(journal.events("attempt")[-1][3]["probe_event_id"], "inspect-create:finish")
+
+    def test_runner_executes_checkpoint_after_reconciliation_without_resubmitting(self):
+        from time import monotonic_ns
+
+        from qabro.contract import Checkpoint, Scenario, Step, Verdict
+        from qabro.evidence import Evidence
+        from qabro.runner import Action, run_scenario
+
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(tool)
+            if tool == "submit":
+                raise TimeoutError()
+            return {"content": [{"type": "text", "text": "saved"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        scenario = Scenario("Submit and check", (Step("save", "Submit", (Checkpoint("saved", "Saved"),)),))
+
+        def recover(action, step):
+            reconcile(browser, action, "recovery-read", "snapshot", {}, lambda _: Effect.COMPLETED)
+
+        def observe(check, sample):
+            browser.invoke("check-read", "save", "snapshot", {}, read_only=True)
+            return Evidence(monotonic_ns(), "check-read:finish", False)
+
+        result = run_scenario(scenario, browser, lambda _: Action("submit", {}), observe, recover=recover)
+        self.assertEqual(calls, ["submit", "snapshot", "snapshot"])
+        self.assertEqual(result.verdict, Verdict.FAIL)
