@@ -6,7 +6,8 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from qabro.explorer import HintDraft, NoCandidate
+from qabro.catalog import Catalog
+from qabro.explorer import HintDraft, NoCandidate, explore_recorded
 from qabro.jobs import Job
 from qabro.opencode_metrics import summarize
 from qabro.redaction import REDACTED, TraceRedactor
@@ -56,6 +57,13 @@ def synthesize_hint(
     if any(REDACTED in clean(field) or clean(field) != field for field in (summary, hint, *variants)):
         return NoCandidate(model_tokens=tokens)
     return HintDraft(summary, hint, tuple(variants), True, tokens, 0)
+
+
+def synthesize_next_hint(catalog: Catalog, ask: Callable[[str], tuple[str, int]]) -> bool:
+    """Process the next recorded explorer job with its source values excluded."""
+    return explore_recorded(
+        catalog, lambda job, evidence, values: synthesize_hint(job, evidence, ask, run_values=values),
+    )
 
 
 def ask_opencode(

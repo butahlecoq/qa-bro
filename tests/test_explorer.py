@@ -123,7 +123,7 @@ class ExplorerTests(unittest.TestCase):
             Episode(scope, "select", "b", second, 3),
         ])
 
-        def synthesize(job, evidence):
+        def synthesize(job, evidence, run_values):
             self.assertEqual(evidence, (b"first snapshot", b"second snapshot"))
             return HintDraft("Choose option", "Use the value", ("select",), False, 5, 0)
 
@@ -180,13 +180,18 @@ class ExplorerTests(unittest.TestCase):
         for attempt in ("a", "b"):
             journal.start(attempt, "run", "worker")
             artifact = store.put(attempt.encode(), now=1)
+            journal.append(attempt, "input:start", "tool_start", {
+                "tool": "fill", "arguments": {"value": f"fixture input {attempt}"},
+            })
+            journal.append(attempt, "input:finish", "tool_finish", {"outcome": "returned"})
             journal.append(attempt, "read:finish", "tool_finish", {"artifact_id": artifact})
             record_episode(journal, Episode(scope, "Investigate dropdown", attempt, artifact, 3))
         self.assertEqual(len(scan_experience(journal, catalog.jobs)), 1)
         self.assertEqual(store.prune(before=100, max_bytes=0), 2)
 
-        def synthesize(job, evidence):
+        def synthesize(job, evidence, run_values):
             self.assertEqual(evidence, (b"a", b"b"))
+            self.assertEqual(run_values, ("fixture input a", "fixture input b"))
             return None
 
         self.assertTrue(explore_recorded(catalog, synthesize, clock=lambda: 1))

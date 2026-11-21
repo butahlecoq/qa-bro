@@ -186,7 +186,7 @@ def explore_next(
 
 def explore_recorded(
     catalog: Catalog,
-    synthesize: Callable[[Job, tuple[bytes, ...]], HintDraft | NoCandidate | None],
+    synthesize: Callable[[Job, tuple[bytes, ...], tuple[str, ...]], HintDraft | NoCandidate | None],
     *,
     clock: Callable[[], int] = time_ns,
 ) -> bool:
@@ -196,16 +196,28 @@ def explore_recorded(
 
     def prepare(job: Job) -> HintDraft | NoCandidate | None:
         evidence = []
+        run_values = set()
         for source in job.payload["sources"]:
             artifact_id = source["evidence_id"]
+            events = journal.events(source["attempt_id"])
             linked = any(
                 kind in {"tool_finish", "checkpoint"} and payload.get("artifact_id") == artifact_id
-                for _, _, kind, payload in journal.events(source["attempt_id"])
+                for _, _, kind, payload in events
             )
             content = store.get(artifact_id) if linked else None
             if content is None:
                 return None
             evidence.append(content)
-        return synthesize(job, tuple(evidence))
+            for _, _, kind, payload in events:
+                if kind == "binding_used":
+                    value = payload.get("value")
+                elif kind == "tool_start" and payload.get("tool") in {"fill", "type"}:
+                    arguments = payload.get("arguments", {})
+                    value = arguments.get("value", arguments.get("text"))
+                else:
+                    continue
+                if isinstance(value, str) and value:
+                    run_values.add(value)
+        return synthesize(job, tuple(evidence), tuple(sorted(run_values)))
 
     return explore_next(catalog.jobs, prepare, clock=clock, catalog=catalog)
