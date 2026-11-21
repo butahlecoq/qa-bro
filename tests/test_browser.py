@@ -54,7 +54,7 @@ class BrowserTests(unittest.TestCase):
             return {"content": [{"type": "text", "text": "ready"}]}
 
         browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
-        self.assertEqual(browser.invoke("read", "step-1", "snapshot", {}).outcome, Outcome.RETURNED)
+        self.assertEqual(browser.invoke("read", "step-1", "snapshot", {}, read_only=True).outcome, Outcome.RETURNED)
         self.assertTrue(journal.release_tab("shared", "tab", "attempt"))
 
     def test_result_references_redacted_artifact(self):

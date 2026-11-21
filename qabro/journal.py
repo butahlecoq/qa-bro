@@ -277,9 +277,17 @@ class Journal:
     def release_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
-            for _, payload in self._actions_to_reconcile(self._events(db, attempt)):
-                if (payload.get("context"), payload.get("tab")) == (context, tab):
-                    return False
+            events = self._events(db, attempt)
+            finishes = {event for _, event, kind, _ in events if kind == "tool_finish"}
+            pending = list(self._actions_to_reconcile(events))
+            pending.extend(
+                (event, payload) for _, event, kind, payload in events
+                if kind == "tool_start" and payload.get("read_only") is True
+                and f"{event.removesuffix(':start')}:finish" not in finishes
+            )
+            if any((payload.get("context"), payload.get("tab")) == (context, tab)
+                   for _, payload in pending):
+                return False
             return db.execute(
                 "DELETE FROM tab_leases WHERE context_id=? AND tab_id=? AND attempt_id=?",
                 (context, tab, attempt),
