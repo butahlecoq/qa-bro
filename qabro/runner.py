@@ -49,6 +49,12 @@ class ArgumentBranch:
     when_true: tuple[tuple[str, str | Parameter], ...]
     when_false: tuple[tuple[str, str | Parameter], ...]
 
+    max_samples: int = 1
+
+    def __post_init__(self):
+        if type(self.max_samples) is not int or not 1 <= self.max_samples <= 20:
+            raise ValueError("A branch requires between one and twenty samples")
+
 
 @dataclass(frozen=True)
 class RecipeStep:
@@ -129,7 +135,7 @@ def run_scenario(
     bindings: AttemptBindings | None = None,
     max_actions: int | None = None,
     read_options: Callable[[str], Options] | None = None,
-    probe_branch: Callable[[Step, str], bool | None] | None = None,
+    probe_branch: Callable[[Step, str, int], bool | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
@@ -190,8 +196,19 @@ def run_scenario(
                 if index in planned and bindings is not None:
                     item = planned[index]
                     branch_value = None
-                    if item.branch is not None and probe_branch is not None:
-                        branch_value = probe_branch(step, item.branch.probe)
+                    prior_branch = saved.get(f"{action_id}:branch")
+                    if prior_branch is not None:
+                        branch_value = prior_branch["outcome"]
+                    elif item.branch is not None and probe_branch is not None:
+                        for sample in range(item.branch.max_samples):
+                            if browser.budget is not None:
+                                browser.budget.remaining_seconds()
+                            branch_value = probe_branch(step, item.branch.probe, sample)
+                            if branch_value is not None:
+                                break
+                        journal.append(attempt_id, f"{action_id}:branch", "recipe_branch", {
+                            "probe": item.branch.probe, "outcome": branch_value, "samples": sample + 1,
+                        })
                     if item.branch is not None and branch_value is None:
                         action = resolve(step)
                     else:
