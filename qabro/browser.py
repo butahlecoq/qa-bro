@@ -1,10 +1,12 @@
 """Observe ordinary and replayed browser calls at the same boundary."""
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from time import monotonic_ns
+from time import monotonic_ns, time_ns
 
+from qabro.artifacts import ArtifactStore
 from qabro.budget import Budget
 from qabro.journal import Journal
 
@@ -19,6 +21,7 @@ class Outcome(StrEnum):
 class ToolResult:
     outcome: Outcome
     raw: object
+    artifact_id: str | None = None
 
 
 def normalize(raw: object) -> Outcome:
@@ -50,6 +53,7 @@ class BrowserCalls:
         redact: Callable[[object], object],
         *,
         budget: Budget | None = None,
+        artifacts: ArtifactStore | None = None,
     ):
         self.journal = journal
         self.attempt = attempt
@@ -58,6 +62,7 @@ class BrowserCalls:
         self.call = call
         self.redact = redact
         self.budget = budget
+        self.artifacts = artifacts
 
     def invoke(
         self, action: str, step: str, tool: str, arguments: dict, *, read_only: bool = False,
@@ -76,11 +81,17 @@ class BrowserCalls:
             self._finish(action, Outcome.UNKNOWN, {"exception": type(error).__name__}, started)
             raise
         outcome = normalize(raw)
-        self._finish(action, outcome, self.redact(raw), started)
-        return ToolResult(outcome, raw)
+        artifact_id = self._finish(action, outcome, self.redact(raw), started)
+        return ToolResult(outcome, raw, artifact_id)
 
-    def _finish(self, action: str, outcome: Outcome, raw: object, started: int) -> None:
-        self.journal.append(
-            self.attempt, f"{action}:finish", "tool_finish",
-            {"outcome": outcome, "raw": raw, "elapsed_ns": monotonic_ns() - started},
-        )
+    def _finish(self, action: str, outcome: Outcome, raw: object, started: int) -> str | None:
+        artifact_id = None
+        payload = {"outcome": outcome, "elapsed_ns": monotonic_ns() - started}
+        if self.artifacts is None:
+            payload["raw"] = raw
+        else:
+            encoded = json.dumps(raw, allow_nan=False, sort_keys=True).encode()
+            artifact_id = self.artifacts.put(encoded, now=time_ns())
+            payload["artifact_id"] = artifact_id
+        self.journal.append(self.attempt, f"{action}:finish", "tool_finish", payload)
+        return artifact_id

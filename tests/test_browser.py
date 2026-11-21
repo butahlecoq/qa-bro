@@ -56,3 +56,27 @@ class BrowserTests(unittest.TestCase):
         browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
         self.assertEqual(browser.invoke("read", "step-1", "snapshot", {}).outcome, Outcome.RETURNED)
         self.assertTrue(journal.release_tab("shared", "tab", "attempt"))
+
+    def test_result_references_redacted_artifact(self):
+        import json
+
+        from qabro.artifacts import ArtifactStore
+
+        directory = self.enterContext(TemporaryDirectory())
+        path = Path(directory) / "runs.sqlite"
+        journal = Journal(path)
+        artifacts = ArtifactStore(path)
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        raw = {"content": [{"type": "text", "text": "credential"}]}
+        redacted = {"content": [{"type": "text", "text": "[redacted]"}]}
+        browser = BrowserCalls(
+            journal, "attempt", "shared", "tab", lambda tab, tool, arguments: raw,
+            lambda value: redacted if value == raw else value, artifacts=artifacts,
+        )
+        result = browser.invoke("inspect", "open", "snapshot", {}, read_only=True)
+        self.assertEqual(result.raw, raw)
+        finish = journal.events("attempt")[-1][3]
+        self.assertNotIn("raw", finish)
+        self.assertEqual(finish["artifact_id"], result.artifact_id)
+        self.assertEqual(json.loads(artifacts.get(result.artifact_id)), redacted)
