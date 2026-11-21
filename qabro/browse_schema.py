@@ -2,33 +2,16 @@
 
 import argparse
 import json
-import os
-import subprocess
 from hashlib import sha256
+
+from qabro.browse_transport import BrowseTransport
 
 
 def inspect(executable: str) -> dict:
-    messages = [
-        {"id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2024-11-05", "capabilities": {},
-            "clientInfo": {"name": "qa-bro", "version": "0.1"},
-        }},
-        {"method": "notifications/initialized"},
-        {"id": 2, "method": "tools/list", "params": {}},
-    ]
-    request = "".join(json.dumps({"jsonrpc": "2.0", **message}) + "\n" for message in messages)
-    output = subprocess.run(
-        [executable, "mcp"], input=request, text=True, capture_output=True,
-        check=True, timeout=10, env={**os.environ, "OPENCODE_BROWSER_TOOLS": "plain"},
-    ).stdout
-    replies = {}
-    for line in output.splitlines():
-        reply = json.loads(line)
-        if "id" in reply:
-            replies[reply["id"]] = reply
+    with BrowseTransport(executable, timeout=10) as browse:
+        server = browse.server_info
+        tool_list = browse.request("tools/list", {})
     try:
-        server = replies[1]["result"]["serverInfo"]
-        tool_list = replies[2]["result"]
         tools = sorted(tool_list["tools"], key=lambda tool: tool["name"])
     except (KeyError, TypeError) as error:
         raise ValueError("Browse did not return a complete MCP tool schema") from error
