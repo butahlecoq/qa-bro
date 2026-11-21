@@ -91,3 +91,36 @@ class LiveValidationTests(unittest.TestCase):
         self.assertTrue(validate_next_hint(catalog, validate))
         catalog.pin("after-rejection")
         self.assertEqual(catalog.search("after-rejection", "category", scope, frozenset()), [ref])
+
+    def test_changed_snapshot_schema_triggers_a_live_compatibility_check(self):
+        from copy import deepcopy
+
+        from qabro.browse_schema import snapshot_schema
+        from qabro.compatibility import check_browse_upgrade
+
+        executable = os.environ.get("QABRO_BROWSE", "browse")
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        tab = f"compatibility-{uuid4().hex[:12]}"
+        journal.start(tab, tab, "validator")
+        journal.claim_tab("fixture", tab, tab)
+        with BrowseTransport(executable) as live:
+            live.prepare_tab(tab, allowed_origins=("http://127.0.0.1:18765",))
+            try:
+                previous = deepcopy(snapshot_schema(live))
+                snapshot = next(tool for tool in previous["tools"] if tool["name"] == "snapshot")
+                snapshot["inputSchema"]["required"].append("old_argument")
+                browser = BrowserCalls(journal, tab, "fixture", tab, live, lambda value: value)
+
+                def smoke(adapter):
+                    result = adapter.invoke("smoke-snapshot", "check", "snapshot", {}, read_only=True)
+                    return result.outcome is Outcome.RETURNED
+
+                self.assertEqual(check_browse_upgrade(
+                    browser, live, previous, {"snapshot": smoke}, frozenset({"snapshot", "status"}),
+                ), frozenset({"snapshot", "status"}))
+                self.assertEqual([kind for _, _, kind, _ in journal.events(tab)], [
+                    "browser_schema", "tool_start", "tool_finish", "compatibility_check",
+                ])
+            finally:
+                live.request("tools/call", {"name": "tabs", "arguments": {"action": "close", "tab": tab}})
