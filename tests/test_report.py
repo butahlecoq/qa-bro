@@ -38,3 +38,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(pruned["verdict"], Verdict.FAIL)
         self.assertEqual(pruned["attempts"], [])
         self.assertEqual(report_run(journal, "unknown")["pruned_attempt_ids"], [])
+
+    def test_crash_after_persisted_mismatch_does_not_hide_failure(self):
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        for attempt in ("crashed", "retry"):
+            journal.start(attempt, "run", "worker")
+            journal.append(attempt, "scenario:start", "scenario_start", {"contract_revision": "same"})
+        journal.append("crashed", "check:saved", "checkpoint", {
+            "step": "save", "outcome": "observed_mismatch", "artifact_id": "first-snapshot",
+        })
+        journal.append("retry", "scenario:finish", "scenario_finish", {"verdict": "PASS"})
+        report = report_run(Journal(journal.path), "run")
+        self.assertEqual(report["verdict"], Verdict.FAIL)
+        self.assertTrue(report["flaky_or_recovered_after_failure"])
+        self.assertEqual(report["attempts"][0]["checkpoints"][0]["artifact_id"], "first-snapshot")

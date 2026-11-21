@@ -1,6 +1,6 @@
 """Report one scenario's persisted attempts without merging their proofs."""
 
-from qabro.contract import Verdict, overall_verdict
+from qabro.contract import Observation, Verdict, overall_verdict
 from qabro.journal import Journal
 
 
@@ -17,14 +17,18 @@ def report_run(journal: Journal, run: str) -> dict:
             continue
         revisions.add(start["contract_revision"])
         finish = by_id.get("scenario:finish", {})
-        verdict = Verdict(finish.get("verdict", Verdict.INCONCLUSIVE))
+        checkpoints = [payload for _, _, kind, payload in events if kind == "checkpoint"]
+        interrupted_mismatch = not finish and any(
+            check.get("outcome") == Observation.MISMATCH for check in checkpoints
+        )
+        verdict = Verdict.FAIL if interrupted_mismatch else Verdict(finish.get("verdict", Verdict.INCONCLUSIVE))
         recovered |= failed and verdict is Verdict.PASS
         failed |= verdict is Verdict.FAIL
         attempts.append({
             "id": attempt_id,
             "verdict": verdict,
-            "cause": finish.get("cause", "unknown"),
-            "checkpoints": [payload for _, _, kind, payload in events if kind == "checkpoint"],
+            "cause": finish.get("cause", "product" if interrupted_mismatch else "unknown"),
+            "checkpoints": checkpoints,
         })
 
     if len(revisions) > 1:
