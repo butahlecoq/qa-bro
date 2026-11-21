@@ -124,3 +124,40 @@ class LiveValidationTests(unittest.TestCase):
                 ])
             finally:
                 live.request("tools/call", {"name": "tabs", "arguments": {"action": "close", "tab": tab}})
+
+    def test_changed_static_option_order_quarantines_only_the_observed_scope(self):
+        from qabro.catalog import SkillRef
+        from qabro.compatibility import observe_static_select
+
+        url = os.environ["QABRO_FIXTURE_URL"]
+        parsed = urlsplit(url)
+        self.assertIn(parsed.hostname, ("127.0.0.1", "localhost"))
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, catalog = Journal(path), Catalog(path)
+        scope = Scope("fixture", "select", "requirements", "editor")
+        independent = Scope("fixture", "select", "orders", "editor")
+        affected = SkillRef("requirement-category", "1", "Choose category")
+        unaffected = SkillRef("order-category", "1", "Choose category")
+        tab = f"drift-{uuid4().hex[:12]}"
+        journal.start(tab, tab, "validator")
+        journal.claim_tab("fixture", tab, tab)
+        with BrowseTransport(os.environ.get("QABRO_BROWSE", "browse")) as live:
+            live.prepare_tab(tab, allowed_origins=(f"{parsed.scheme}://{parsed.netloc}",))
+            browser = BrowserCalls(journal, tab, "fixture", tab, live, lambda value: value)
+            try:
+                for index, suffix in enumerate(("", "?reverse-categories")):
+                    result = browser.invoke(f"open-{index}", "open", "navigate", {"url": url + suffix})
+                    self.assertIs(result.outcome, Outcome.RETURNED)
+                    changed = observe_static_select(catalog, scope, browser, probe=f"read-{index}",
+                                                    step="category", selector="select[name=category]")
+                    self.assertEqual(changed, [affected] if index else [])
+                    if index == 0:
+                        catalog.seed_verified_hint(affected, scope, "Select by position.")
+                        catalog.seed_verified_hint(unaffected, independent, "Select by position.")
+            finally:
+                live.request("tools/call", {"name": "tabs", "arguments": {"action": "close", "tab": tab}})
+        catalog.pin("after")
+        self.assertEqual(catalog.search("after", "category", scope, frozenset()), [])
+        self.assertEqual(catalog.search("after", "category", independent, frozenset()), [unaffected])
+        self.assertEqual(catalog.jobs.claim("revalidate", now_ns=1, lease_ns=10).payload["skill"]["id"],
+                         affected.id)

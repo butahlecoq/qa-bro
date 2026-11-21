@@ -10,6 +10,7 @@ from qabro.browse_transport import BrowseTransport
 from qabro.browser import BrowserCalls
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.jobs import JobQueue
+from qabro.options import read_native_options
 
 
 def verified_capabilities(
@@ -78,3 +79,12 @@ def check_browse_upgrade(
         return passed
 
     return verified_capabilities(previous, current, required, smoke)
+
+
+def observe_static_select(
+    catalog: Catalog, scope: Scope, browser: BrowserCalls, *, probe: str, step: str, selector: str,
+) -> list[SkillRef]:
+    """Compare a static select's ordered option definitions in a verified UI scope."""
+    options = read_native_options(browser, probe, step, selector)
+    encoded = json.dumps([asdict(option) for option in options.items], sort_keys=True)
+    return catalog.observe_component(scope, sha256(encoded.encode()).hexdigest())
