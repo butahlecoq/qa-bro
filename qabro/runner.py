@@ -24,6 +24,16 @@ class AmbiguousTarget(Exception):
         self.artifact_id = artifact_id
 
 
+class EnvironmentBlocked(Exception):
+    """The current environment prevents the next scenario operation."""
+
+    def __init__(self, artifact_id: str):
+        super().__init__("The environment prevents scenario execution")
+        if not artifact_id:
+            raise ValueError("A blocked environment requires an evidence reference")
+        self.artifact_id = artifact_id
+
+
 @dataclass(frozen=True)
 class Action:
     tool: str
@@ -104,6 +114,7 @@ def run_scenario(
             raise ValueError("The pinned recipe cannot resume this scenario")
         planned.update(enumerate(recipe.steps, start=index))
     cause = Cause.UNKNOWN
+    blocked = False
     try:
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:
@@ -176,6 +187,12 @@ def run_scenario(
                 for checkpoint in step.checkpoints
             ):
                 break
+    except EnvironmentBlocked as error:
+        blocked = True
+        cause = Cause.ENVIRONMENT
+        journal.append(attempt_id, f"{action_id}:blocked", "environment_blocked", {
+            "step": step.id, "artifact_id": error.artifact_id,
+        })
     except AmbiguousTarget as error:
         cause = Cause.AUTOMATION
         journal.append(attempt_id, f"{action_id}:ambiguous", "ambiguous_target", {
@@ -202,7 +219,7 @@ def run_scenario(
 
     if Observation.MISMATCH in observations.values():
         cause = Cause.PRODUCT
-    attempt = Attempt(scenario, tuple(completed), observations, cause=cause)
+    attempt = Attempt(scenario, tuple(completed), observations, blocked=blocked, cause=cause)
     journal.append(attempt_id, "scenario:finish", "scenario_finish", {
         "verdict": attempt.verdict, "cause": attempt.cause,
     })

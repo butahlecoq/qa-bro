@@ -224,3 +224,26 @@ class RunnerTests(unittest.TestCase):
             "step": "save", "artifact_id": "snapshot-with-two-buttons",
         })
         self.assertEqual(events["scenario_finish"]["cause"], "automation")
+
+    def test_environment_block_preserves_evidence_and_verdict(self):
+        from qabro.runner import EnvironmentBlocked
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("attempt", "run", "worker")
+        scenario = Scenario("Open application", (Step("open", "Open application"),))
+        browser = BrowserCalls(journal, "attempt", "shared", "tab",
+                               lambda *_: self.fail("Blocked scenario must not dispatch"),
+                               lambda value: value)
+
+        def resolve(step):
+            raise EnvironmentBlocked("expired-session")
+
+        result = run_scenario(scenario, browser, resolve, lambda *_: None)
+        self.assertEqual(result.verdict, Verdict.BLOCKED)
+        self.assertEqual(journal.events("attempt")[-2][3], {
+            "step": "open", "artifact_id": "expired-session",
+        })
+        self.assertEqual(journal.events("attempt")[-1][3], {
+            "cause": "environment", "verdict": "BLOCKED",
+        })
