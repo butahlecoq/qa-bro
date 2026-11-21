@@ -185,24 +185,44 @@ class ValidationTests(unittest.TestCase):
     def test_defect_trial_requires_same_observed_failure_through_recipe(self):
         from qabro.journal import Journal
         from qabro.runner import Recipe, RecipeStep
-        from qabro.validation import DefectTrial, _defect_evidence
+        from qabro.artifacts import ArtifactStore
+        from qabro.validation import DefectTrial, _defect_evidence, quarantine_false_pass
 
-        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
-        recipe = Recipe("candidate", "1", (RecipeStep(Step("save", "Save"), "click", ()),))
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, catalog, store = Journal(path), Catalog(path), ArtifactStore(path)
+        scope = Scope("fixture", "form", "requirements", "editor")
+        previous = SkillRef("candidate", "1", "Save form")
+        current = SkillRef("candidate", "2", "Save form")
+        capabilities = frozenset({"click"})
+        recipe = Recipe(current.id, current.revision, (RecipeStep(Step("save", "Save"), "click", ()),))
+        catalog.seed_verified_hint(previous, scope, "Use Save.", capabilities=capabilities)
+        catalog.seed_verified_hint(current, scope, "Use Save.", capabilities=capabilities, recipe=recipe)
+        catalog.pin("in-flight")
+        proofs = {}
         for attempt, verdict in (("plain", Verdict.FAIL), ("replay", Verdict.FAIL), ("masked", Verdict.PASS)):
             journal.start(attempt, attempt, "validator")
             journal.append(attempt, "scenario:start", "scenario_start", {"contract_revision": "same"})
             if attempt != "plain":
-                journal.append(attempt, "recipe:0", "recipe_selected", {"fingerprint": recipe.fingerprint})
+                journal.append(attempt, "recipe:0", "recipe_selected", {
+                    "id": current.id, "revision": current.revision, "fingerprint": recipe.fingerprint,
+                })
                 journal.append(attempt, "step-0:recipe", "recipe_action", {"action": "step-0", "fallback": False})
                 journal.append(attempt, "step-0:finish", "tool_finish", {"outcome": "returned"})
             if verdict is Verdict.FAIL:
+                proofs[attempt] = store.put(f"{attempt}-proof".encode(), now=1)
                 journal.append(attempt, "check:saved", "checkpoint", {
-                    "outcome": Observation.MISMATCH, "artifact_id": f"{attempt}-proof",
+                    "outcome": Observation.MISMATCH, "artifact_id": proofs[attempt],
                 })
             journal.append(attempt, "scenario:finish", "scenario_finish", {"verdict": verdict})
         self.assertEqual(
             _defect_evidence(journal, DefectTrial("plain", "replay"), recipe),
-            {"plain-proof", "replay-proof"},
+            set(proofs.values()),
         )
         self.assertIsNone(_defect_evidence(journal, DefectTrial("plain", "masked"), recipe))
+        self.assertFalse(quarantine_false_pass(catalog, current, DefectTrial("plain", "replay")))
+        catalog.pin("after-product-defect")
+        self.assertEqual(catalog.search("after-product-defect", "Save", scope, capabilities), [current])
+        self.assertTrue(quarantine_false_pass(catalog, current, DefectTrial("plain", "masked")))
+        catalog.pin("after-false-pass")
+        self.assertEqual(catalog.search("after-false-pass", "Save", scope, capabilities), [previous])
+        self.assertEqual(catalog.search("in-flight", "Save", scope, capabilities), [current])

@@ -333,3 +333,44 @@ def _validate_job(
               "evidence": sorted(references)},
         now_ns=clock(), finalize=finalize,
     )
+
+
+def quarantine_false_pass(catalog: Catalog, ref: SkillRef, trial: DefectTrial) -> bool:
+    """Roll back a revision when a controlled comparison confirms a false PASS."""
+    if trial.plain_attempt == trial.recipe_attempt:
+        return False
+    journal = Journal(catalog.path)
+    plain = journal.events(trial.plain_attempt)
+    replay = journal.events(trial.recipe_attempt)
+    ordinary = {event: payload for _, event, _, payload in plain}
+    assisted = {event: payload for _, event, _, payload in replay}
+    revision = ordinary.get("scenario:start", {}).get("contract_revision")
+    if not revision or assisted.get("scenario:start", {}).get("contract_revision") != revision:
+        return False
+    if ordinary.get("scenario:finish", {}).get("verdict") != Verdict.FAIL:
+        return False
+    if assisted.get("scenario:finish", {}).get("verdict") != Verdict.PASS:
+        return False
+    if any(kind == "recipe_selected" for _, _, kind, _ in plain):
+        return False
+    selections = [payload for _, _, kind, payload in replay if kind == "recipe_selected"]
+    if not selections or any(
+        (payload.get("id"), payload.get("revision")) != (ref.id, ref.revision)
+        for payload in selections
+    ):
+        return False
+    if not any(
+        kind == "recipe_action" and not payload.get("fallback")
+        and assisted.get(f"{payload.get('action')}:finish", {}).get("outcome") == "returned"
+        for _, _, kind, payload in replay
+    ):
+        return False
+    store = ArtifactStore(catalog.path)
+    if not any(
+        kind == "checkpoint" and payload.get("outcome") == Observation.MISMATCH
+        and payload.get("artifact_id") and store.get(payload["artifact_id"]) is not None
+        for _, _, kind, payload in plain
+    ):
+        return False
+    catalog.quarantine(ref, f"False PASS confirmed by attempts {trial.plain_attempt} and {trial.recipe_attempt}")
+    return True
