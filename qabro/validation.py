@@ -160,10 +160,24 @@ def validate_next_transfer(
 def _recipe_step_evidence(selection: str, payload: dict, entries: dict) -> set[str] | None:
     index = int(selection.removeprefix("recipe:"))
     references = set()
+    schemas = {
+        item["name"]: item["inputSchema"]
+        for item in entries.get("browse:schema", {}).get("tools", ())
+    }
     for offset, step in enumerate(payload["steps"]):
         action_id = f"step-{index + offset}"
         recorded = entries.get(f"{action_id}:recipe", {})
         if recorded.get("step") != step or recorded.get("action") != action_id or recorded.get("fallback"):
+            return None
+        dispatched = entries.get(f"{action_id}:start", {})
+        schema = schemas.get(dispatched.get("tool"))
+        arguments = dispatched.get("arguments")
+        if dispatched.get("step") != step or schema is None or not isinstance(arguments, dict):
+            return None
+        sent = arguments.keys() | {"tab"}
+        if not set(schema.get("required", ())) <= sent:
+            return None
+        if schema.get("additionalProperties") is False and not sent <= schema.get("properties", {}).keys():
             return None
         if entries.get(f"{action_id}:finish", {}).get("outcome") != "returned":
             return None

@@ -64,7 +64,7 @@ class ValidationTests(unittest.TestCase):
 
         guard_artifact = store.put(b"Verified visible field", now=1)
 
-        def validate(candidate, branch_probe=None):
+        def validate(candidate, branch_probe=None, required=()):
             step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
             scenario = Scenario("Open menu", (step,))
             journal = Journal(path)
@@ -73,6 +73,11 @@ class ValidationTests(unittest.TestCase):
                 attempt = f"validation-{candidate.ref.id}-{candidate.ref.revision}-{index}"
                 journal.start(attempt, attempt, "validator")
                 journal.claim_tab("fixture", attempt, attempt)
+                journal.append(attempt, "browse:schema", "browser_schema", {"tools": [
+                    {"name": "click", "inputSchema": {
+                        "properties": {"tab": {}, "selector": {}}, "required": list(required),
+                    }},
+                ]})
                 browser = BrowserCalls(
                     journal, attempt, "fixture", attempt,
                     lambda *_: {"content": [{"type": "text", "text": "ok"}]}, lambda value: value,
@@ -165,6 +170,17 @@ class ValidationTests(unittest.TestCase):
         self.assertCountEqual(found, [replacement, expected])
         self.assertEqual(catalog.load_recipe("after-both-branches", expected),
                          replace(fallback_recipe, id=expected.id, revision=expected.revision))
+
+        draft["recipe"] = encode_recipe(Recipe("draft", "3", (RecipeStep(step, "click", ()),)))
+        catalog.jobs.enqueue("invalid-schema", "validate_hint", draft)
+        self.assertTrue(validate_next_hint(
+            catalog, lambda candidate: validate(candidate, required=("selector",)), clock=lambda: 8,
+        ))
+        catalog.pin("after-invalid-schema")
+        self.assertCountEqual(
+            catalog.search("after-invalid-schema", "category", scope, frozenset({"click"})),
+            [replacement, expected],
+        )
 
     def test_defect_trial_requires_same_observed_failure_through_recipe(self):
         from qabro.journal import Journal
