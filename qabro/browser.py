@@ -54,6 +54,7 @@ class BrowserCalls:
         *,
         budget: Budget | None = None,
         artifacts: ArtifactStore | None = None,
+        resources: tuple[str, ...] = (),
     ):
         self.journal = journal
         self.attempt = attempt
@@ -63,6 +64,7 @@ class BrowserCalls:
         self.redact = redact
         self.budget = budget
         self.artifacts = artifacts
+        self.resources = resources
 
     def invoke(
         self, action: str, step: str, tool: str, arguments: dict, *, read_only: bool = False,
@@ -72,7 +74,7 @@ class BrowserCalls:
         self.journal.append(
             self.attempt, f"{action}:start", "tool_start",
             {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments), "read_only": read_only},
-            reserve=True, tab=(self.context, self.tab),
+            reserve=True, tab=(self.context, self.tab), resources=self.resources,
         )
         started = monotonic_ns()
         try:

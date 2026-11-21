@@ -62,6 +62,7 @@ class Journal:
     def append(
         self, attempt: str, event: str, kind: str, payload: dict, *,
         reserve: bool = False, tab: tuple[str, str] | None = None,
+        resources: tuple[str, ...] = (),
     ) -> int:
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(self._connect()) as db, db:
@@ -72,6 +73,12 @@ class Journal:
                 ).fetchone()
                 if owner != (attempt,):
                     raise PermissionError("Attempt does not own this browser tab")
+            for resource in resources:
+                owner = db.execute(
+                    "SELECT attempt_id FROM resource_leases WHERE resource=?", (resource,)
+                ).fetchone()
+                if owner != (attempt,):
+                    raise PermissionError("Attempt does not own the required UI resource")
             existing = db.execute(
                 "SELECT sequence, kind, payload FROM events WHERE attempt_id=? AND event_id=?",
                 (attempt, event),

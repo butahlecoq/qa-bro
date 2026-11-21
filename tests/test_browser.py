@@ -80,3 +80,27 @@ class BrowserTests(unittest.TestCase):
         self.assertNotIn("raw", finish)
         self.assertEqual(finish["artifact_id"], result.artifact_id)
         self.assertEqual(json.loads(artifacts.get(result.artifact_id)), redacted)
+
+    def test_resource_and_tab_are_required_before_dispatch(self):
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("worker", "run", "worker")
+        journal.start("explorer", "probe", "explorer")
+        journal.claim_tab("shared", "explorer-tab", "explorer")
+        journal.claim_resources("worker", ("record:42",))
+        dispatched = []
+
+        def call(tab, tool, arguments):
+            dispatched.append((tab, tool))
+            return {"content": [{"type": "text", "text": "done"}]}
+
+        browser = BrowserCalls(journal, "explorer", "shared", "explorer-tab", call,
+                               lambda value: value, resources=("record:42",))
+        with self.assertRaisesRegex(PermissionError, "required UI resource"):
+            browser.invoke("update", "probe", "click", {})
+        self.assertEqual(dispatched, [])
+        self.assertEqual(journal.events("explorer"), [])
+        journal.release_resources("worker")
+        self.assertTrue(journal.claim_resources("explorer", ("record:42",)))
+        self.assertIs(browser.invoke("update", "probe", "click", {}).outcome, Outcome.RETURNED)
+        self.assertEqual(dispatched, [("explorer-tab", "click")])
