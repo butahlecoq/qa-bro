@@ -63,3 +63,32 @@ class BindingTests(unittest.TestCase):
         AttemptBindings({"item": Select(last=True)}, **options)
         with self.assertRaisesRegex(ValueError, "different evidence"):
             AttemptBindings({"item": Select(last=False)}, **options)
+
+    def test_reopening_live_options_uses_a_fresh_read_without_reselecting(self):
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.browser import BrowserCalls
+        from qabro.journal import Journal
+        from qabro.options import read_native_options
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("a", "run", "worker")
+        journal.claim_tab("shared", "tab", "a")
+        entries = [{"id": "1", "label": "First"}, {"id": "2", "label": "Last"}]
+
+        def transport(*_):
+            return {"content": [{"type": "text", "text": json.dumps(entries)}]}
+
+        opts = {"seed": 15, "base_time": datetime(2026, 1, 1, tzinfo=UTC), "attempt": "a"}
+        for log in (journal, Journal(path)):
+            browser = BrowserCalls(log, "a", "shared", "tab", transport, lambda value: value)
+            bindings = AttemptBindings({"item": Select(last=True)}, journal=log, **opts)
+            selected = bindings.resolve("item", lambda _: read_native_options(browser, "options", "select", "#items"))
+            self.assertEqual(selected.id, "2")
+            entries.reverse()
+
+        starts = [event for _, event, kind, _ in journal.events("a") if kind == "tool_start"]
+        self.assertEqual(len(set(starts)), 2)

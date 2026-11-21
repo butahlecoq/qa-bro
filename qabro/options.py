@@ -1,13 +1,14 @@
 """Read the complete ordered options of a native HTML select."""
 
 import json
+from uuid import uuid4
 
 from qabro.bindings import Option, Options, UnresolvedBinding
 from qabro.browser import BrowserCalls, Outcome
 
 
 def read_native_options(browser: BrowserCalls, probe: str, step: str, selector: str) -> Options:
-    result = browser.invoke(probe, step, "eval", {
+    result = browser.invoke(f"{probe}:{uuid4().hex}", step, "eval", {
         "selector": selector,
         "expression": """element => element.tagName === "SELECT"
             ? Array.from(element.options, option => ({id: option.value, label: option.label}))
