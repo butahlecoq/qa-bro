@@ -20,6 +20,17 @@ class BackendEvaluationTests(unittest.TestCase):
         self.assertEqual(result["mismatches"], [TrialCase.PARTIAL_EFFECT])
         self.assertEqual(result["decision"], "plain")
 
+    def test_agreement_without_trace_or_expected_control_verdict_keeps_plain(self):
+        cases = (TrialCase.SUCCESS, TrialCase.CHECKPOINT_FAILURE, TrialCase.PARTIAL_EFFECT)
+        result = BackendRun("recipe", (TraceEvent("step", "checkpoint", "observed_match", "proof"),),
+                            Verdict.PASS, 100, True)
+        pairs = [BackendPair(case, result, replace(result, elapsed_ns=50)) for case in cases]
+        empty = replace(result, events=())
+        pairs[0] = BackendPair(TrialCase.SUCCESS, empty, replace(empty, elapsed_ns=50))
+        evaluation = evaluate_backend(pairs, minimum_saved_ns=10)
+        self.assertEqual(evaluation["mismatches"], [TrialCase.SUCCESS, TrialCase.CHECKPOINT_FAILURE])
+        self.assertEqual(evaluation["decision"], "plain")
+
     def test_manifest_requires_the_pilot_selection_and_exact_validated_revision(self):
         from dataclasses import asdict
 

@@ -40,16 +40,21 @@ class BackendPair:
 
 def evaluate_backend(pairs: list[BackendPair], *, minimum_saved_ns: int) -> dict:
     """Require every test case to preserve behavior before considering latency savings."""
-    if minimum_saved_ns <= 0:
+    if type(minimum_saved_ns) is not int or minimum_saved_ns <= 0:
         raise ValueError("The measurable improvement threshold must be positive")
     missing_cases = set(TrialCase) - {pair.case for pair in pairs}
     fingerprints = {
         run.recipe_fingerprint for pair in pairs for run in (pair.plain, pair.compiled)
     }
+    expected_verdicts = {
+        TrialCase.SUCCESS: Verdict.PASS, TrialCase.CHECKPOINT_FAILURE: Verdict.FAIL,
+    }
     mismatches = [
         pair.case for pair in pairs
         if not (pair.plain.complete_trace and pair.compiled.complete_trace)
+        or not pair.plain.events
         or pair.plain.verdict != pair.compiled.verdict
+        or pair.plain.verdict != expected_verdicts.get(pair.case, pair.plain.verdict)
         or pair.plain.events != pair.compiled.events
     ]
     savings = [
