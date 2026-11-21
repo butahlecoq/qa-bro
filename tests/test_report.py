@@ -29,3 +29,12 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report["flaky_or_recovered_after_failure"])
         self.assertEqual([row["verdict"] for row in report["attempts"]], [Verdict.FAIL, Verdict.PASS])
         self.assertEqual(report["attempts"][0]["checkpoints"][0]["artifact_id"], "snapshot-initial")
+
+        for attempt in ("initial", "retry"):
+            journal.release_tab("shared", attempt, attempt)
+        self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
+        pruned = report_run(Journal(path), "run")
+        self.assertEqual(pruned["pruned_attempt_ids"], ["initial", "retry"])
+        self.assertEqual(pruned["verdict"], Verdict.INCONCLUSIVE)
+        self.assertEqual(pruned["attempts"], [])
+        self.assertEqual(report_run(journal, "unknown")["pruned_attempt_ids"], [])

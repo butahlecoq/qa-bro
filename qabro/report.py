@@ -29,9 +29,14 @@ def report_run(journal: Journal, run: str) -> dict:
 
     if len(revisions) > 1:
         raise ValueError("Run attempts must share the same scenario revision")
+    pruned = journal.pruned_attempts_for_run(run)
+    verdict = overall_verdict(tuple(attempt["verdict"] for attempt in attempts))
+    if pruned and verdict is not Verdict.FAIL:
+        verdict = Verdict.INCONCLUSIVE
     return {
         "run": run,
-        "verdict": overall_verdict(tuple(attempt["verdict"] for attempt in attempts)),
+        "verdict": verdict,
+        "pruned_attempt_ids": pruned,
         "flaky_or_recovered_after_failure": recovered,
         "attempts": attempts,
     }

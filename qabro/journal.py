@@ -181,6 +181,18 @@ class Journal:
             rows = db.execute("SELECT id FROM attempts WHERE run_id=? ORDER BY rowid", (run,))
             return [attempt for (attempt,) in rows]
 
+    def pruned_attempts_for_run(self, run: str) -> list[str]:
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                """
+                SELECT a.id FROM attempts a
+                JOIN finished_attempts f ON f.attempt_id=a.id
+                WHERE a.run_id=? AND f.pruned=1 ORDER BY a.rowid
+                """,
+                (run,),
+            )
+            return [attempt for (attempt,) in rows]
+
     def events_of_kind(self, kind: str) -> list[tuple[str, dict]]:
         with closing(self._connect()) as db:
             rows = db.execute(
