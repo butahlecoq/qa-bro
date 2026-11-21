@@ -21,7 +21,7 @@ Start a browse relay paired with a dedicated Chromium profile and serve the fixt
 python -m http.server 18765 --bind 127.0.0.1 --directory tests/fixtures
 ```
 
-Run these commands in another terminal using the same browse relay configuration. Browse requires an explicit allowed origin for loopback navigation.
+Run these commands in another terminal using the same dedicated relay configuration. Start or restart that relay with `OPENCODE_BROWSER_TOOLS=plain` so its MCP tool list includes the individual browser operations. Browse requires an explicit allowed origin for loopback navigation.
 
 ```sh
 python -m qabro.browse_schema

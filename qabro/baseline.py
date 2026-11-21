@@ -77,6 +77,11 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
     with BrowseTransport(executable, budget=budget) as transport:
         schema = snapshot_schema(transport)
         journal.append(attempt, "browse:schema", "browser_schema", schema)
+        required_tools = {action.tool for action in commands.values()} | {"eval", "snapshot"}
+        missing = required_tools - {tool["name"] for tool in schema["tools"]}
+        if missing:
+            journal.release_tab("fixture", tab, attempt)
+            raise RuntimeError(f"Browse relay must expose plain tools: {', '.join(sorted(missing))}")
         # The fixture uses synthetic values in a dedicated browser context.
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
                                artifacts=artifacts, budget=budget)
