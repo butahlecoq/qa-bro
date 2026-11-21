@@ -1,5 +1,6 @@
 import unittest
 
+from qabro.explorer import NoCandidate
 from qabro.jobs import Job
 from qabro.synthesis import synthesize_hint
 
@@ -16,6 +17,6 @@ class SynthesisTests(unittest.TestCase):
         result = synthesize_hint(job, (b"options appeared",), ask)
         self.assertEqual(result.hint, "Open the field")
         self.assertEqual(result.model_tokens, 42)
-        self.assertIsNone(synthesize_hint(job, (), lambda _: ("null", 10)))
+        self.assertEqual(synthesize_hint(job, (), lambda _: ("null", 10)), NoCandidate(10))
         with self.assertRaises(ValueError):
             synthesize_hint(job, (), lambda _: ('{"summary":"missing fields"}', 1))

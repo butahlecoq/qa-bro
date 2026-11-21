@@ -5,7 +5,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from qabro.explorer import HintDraft
+from qabro.explorer import HintDraft, NoCandidate
 from qabro.jobs import Job
 from qabro.opencode_metrics import summarize
 
@@ -14,7 +14,7 @@ def synthesize_hint(
     job: Job,
     evidence: tuple[bytes, ...],
     ask: Callable[[str], tuple[str, int]],
-) -> HintDraft | None:
+) -> HintDraft | NoCandidate:
     """Ask for one reusable hint and validate the response before queuing it."""
     prompt = (
         "Find one reusable UI hint supported by the observations. "
@@ -30,7 +30,7 @@ def synthesize_hint(
     reply, tokens = ask(prompt)
     data = json.loads(reply)
     if data is None:
-        return None
+        return NoCandidate(model_tokens=tokens)
     if not isinstance(data, dict) or data.keys() != {"summary", "hint", "variants"}:
         raise ValueError("Synthesis must return a hint object or null")
     summary, hint, variants = data["summary"], data["hint"], data["variants"]

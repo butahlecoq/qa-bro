@@ -223,3 +223,19 @@ class ExplorerTests(unittest.TestCase):
         self.assertTrue(validate_next_hint(catalog, lambda _: (), clock=lambda: 2))
         self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
         self.assertEqual(store.prune(before=100, max_bytes=0), 0)
+
+    def test_no_candidate_charges_model_and_browser_usage_to_exploration_job(self):
+        import json
+        import sqlite3
+        from contextlib import closing
+
+        from qabro.explorer import NoCandidate, explore_next
+
+        queue = JobQueue(Path(self.enterContext(TemporaryDirectory())) / "jobs.sqlite")
+        queue.enqueue("example", "explore", {})
+        self.assertTrue(explore_next(queue, lambda _: NoCandidate(23, 101), clock=lambda: 1))
+        with closing(sqlite3.connect(queue.path)) as db:
+            result, = db.execute("SELECT result FROM jobs WHERE id='example'").fetchone()
+        self.assertEqual(json.loads(result), {
+            "status": "no_candidate", "model_tokens": 23, "browser_ns": 101,
+        })

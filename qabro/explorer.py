@@ -116,9 +116,15 @@ class HintDraft:
     capabilities: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True)
+class NoCandidate:
+    model_tokens: int = 0
+    browser_ns: int = 0
+
+
 def explore_next(
     queue: JobQueue,
-    synthesize: Callable[[Job], HintDraft | None],
+    synthesize: Callable[[Job], HintDraft | NoCandidate | None],
     *,
     clock: Callable[[], int] = time_ns,
     catalog: Catalog | None = None,
@@ -134,16 +140,19 @@ def explore_next(
 
     draft = synthesize(job)
     if draft is None:
-        return queue.complete(job, {"status": "no_candidate"}, now_ns=clock(), finalize=release)
-    if not draft.summary.strip() or not draft.hint.strip() or not draft.variants:
-        raise ValueError("A candidate requires a summary, hint and claimed variants")
+        draft = NoCandidate()
     if min(draft.model_tokens, draft.browser_ns) < 0:
         raise ValueError("Explorer usage must be nonnegative")
+    usage = {"model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns}
+    if isinstance(draft, NoCandidate):
+        return queue.complete(job, {"status": "no_candidate", **usage}, now_ns=clock(), finalize=release)
+    if not draft.summary.strip() or not draft.hint.strip() or not draft.variants:
+        raise ValueError("A candidate requires a summary, hint and claimed variants")
     if catalog is not None and catalog.has_active_hint(
         Scope(**job.payload["scope"]), draft.hint, draft.capabilities, draft.recipe,
     ):
         return queue.complete(job, {
-            "status": "already_published", "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns,
+            "status": "already_published", **usage,
         }, now_ns=clock(), finalize=release)
     payload = {
         "scope": job.payload["scope"],
@@ -169,7 +178,7 @@ def explore_next(
         release(db)
 
     return queue.complete(
-        job, {"candidate": candidate, "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns},
+        job, {"candidate": candidate, **usage},
         now_ns=clock(),
         finalize=enqueue_validation,
     )
@@ -177,7 +186,7 @@ def explore_next(
 
 def explore_recorded(
     catalog: Catalog,
-    synthesize: Callable[[Job, tuple[bytes, ...]], HintDraft | None],
+    synthesize: Callable[[Job, tuple[bytes, ...]], HintDraft | NoCandidate | None],
     *,
     clock: Callable[[], int] = time_ns,
 ) -> bool:
@@ -185,7 +194,7 @@ def explore_recorded(
     journal = Journal(catalog.path)
     store = ArtifactStore(catalog.path)
 
-    def prepare(job: Job) -> HintDraft | None:
+    def prepare(job: Job) -> HintDraft | NoCandidate | None:
         evidence = []
         for source in job.payload["sources"]:
             artifact_id = source["evidence_id"]
