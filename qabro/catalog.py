@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from qabro.jobs import JobQueue
+from qabro.recipe_format import decode_recipe, encode_recipe
+from qabro.runner import Recipe
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,9 @@ class Catalog:
                     capabilities TEXT NOT NULL, hint TEXT NOT NULL,
                     UNIQUE (id, revision)
                 );
+                CREATE TABLE IF NOT EXISTS skill_recipes (
+                    row_id INTEGER PRIMARY KEY REFERENCES skill_revisions(row_id), body TEXT NOT NULL
+                );
                 CREATE VIRTUAL TABLE IF NOT EXISTS skill_search USING fts5(summary);
                 CREATE TABLE IF NOT EXISTS active_skills (
                     id TEXT PRIMARY KEY, row_id INTEGER NOT NULL
@@ -58,16 +63,19 @@ class Catalog:
             """)
 
     def seed_verified_hint(
-        self, ref: SkillRef, scope: Scope, hint: str, *, capabilities: frozenset[str] = frozenset()
+        self, ref: SkillRef, scope: Scope, hint: str, *,
+        capabilities: frozenset[str] = frozenset(), recipe: Recipe | None = None,
     ) -> None:
         with closing(sqlite3.connect(self.path)) as db, db:
-            self.publish_hint_in(db, ref, scope, hint, capabilities=capabilities)
+            self.publish_hint_in(db, ref, scope, hint, capabilities=capabilities, recipe=recipe)
 
     @staticmethod
     def publish_hint_in(
         db: sqlite3.Connection, ref: SkillRef, scope: Scope, hint: str, *,
-        capabilities: frozenset[str],
+        capabilities: frozenset[str], recipe: Recipe | None = None,
     ) -> None:
+        if recipe is not None and (recipe.id, recipe.revision) != (ref.id, ref.revision):
+            raise ValueError("Recipe and skill revision must match")
         row_id = db.execute(
             """
             INSERT INTO skill_revisions (
@@ -77,6 +85,8 @@ class Catalog:
             (ref.id, ref.revision, ref.summary, scope.platform, scope.component,
              scope.context, scope.role, json.dumps(sorted(capabilities)), hint),
         ).fetchone()[0]
+        if recipe is not None:
+            db.execute("INSERT INTO skill_recipes VALUES (?, ?)", (row_id, encode_recipe(recipe)))
         db.execute("INSERT INTO skill_search(rowid, summary) VALUES (?, ?)", (row_id, ref.summary))
         db.execute(
             "INSERT INTO active_skills VALUES (?, ?) "
@@ -238,3 +248,17 @@ class Catalog:
                 (run, ref.id, ref.revision),
             ).fetchone()
             return Scope(*row) if row else None
+
+
+    def load_recipe(self, run: str, ref: SkillRef) -> Recipe | None:
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute(
+                """
+                SELECT body FROM skill_recipes recipe
+                JOIN skill_revisions r ON r.row_id=recipe.row_id
+                JOIN pinned_skills p ON p.row_id=r.row_id
+                WHERE p.run_id=? AND r.id=? AND r.revision=?
+                """,
+                (run, ref.id, ref.revision),
+            ).fetchone()
+            return decode_recipe(row[0]) if row else None

@@ -94,3 +94,22 @@ class CatalogTests(unittest.TestCase):
         catalog.pin("later")
         self.assertEqual(catalog.search("later", "category", scope, frozenset()), [])
         self.assertEqual(catalog.jobs.claim("revalidate", now_ns=1, lease_ns=10).payload["skill"]["id"], ref.id)
+
+    def test_recipe_round_trips_with_the_pinned_skill_revision(self):
+        from qabro.contract import Checkpoint, Step
+        from qabro.runner import Parameter, Recipe, RecipeStep
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "catalog.sqlite"
+        catalog = Catalog(path)
+        scope = Scope("fixture", "form", "requirements", "editor")
+        ref = SkillRef("fill", "1", "Fill field")
+        step = Step("fill", "Fill name", (Checkpoint("filled", "Name matches", wait_ns=10),))
+        recipe = Recipe(ref.id, ref.revision, (
+            RecipeStep(step, "fill", (("selector", "input[name=name]"), ("value", Parameter("name")))),
+        ))
+        catalog.pin("before")
+        catalog.seed_verified_hint(ref, scope, "Fill the named field", recipe=recipe)
+        catalog.pin("after")
+        reopened = Catalog(path)
+        self.assertIsNone(reopened.load_recipe("before", ref))
+        self.assertEqual(reopened.load_recipe("after", ref), recipe)
