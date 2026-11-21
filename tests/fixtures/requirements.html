@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Requirements fixture</title>
+<main>
+  <h1>Requirements</h1>
+  <form>
+    <label>Name <input name="name" required></label>
+    <label>Due date <input name="date" type="date" required></label>
+    <label>Category
+      <select name="category">
+        <option value="product">Product</option>
+        <option value="operations">Operations</option>
+      </select>
+    </label>
+    <button type="submit">Create</button>
+  </form>
+  <p role="status"></p>
+  <ul aria-label="Created requirements"></ul>
+</main>
+<script>
+  const form = document.querySelector("form");
+  const status = document.querySelector('[role="status"]');
+  const list = document.querySelector("ul");
+  const defective = new URLSearchParams(location.search).has("wrong-category");
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const category = defective ? "wrong" : data.get("category");
+    const item = document.createElement("li");
+    item.textContent = [data.get("name"), data.get("date"), category].join(" | ");
+    list.append(item);
+    status.textContent = "Requirement created";
+    form.reset();
+  });
+</script>
+</html>
