@@ -38,8 +38,8 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str) -> dict:
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
                                artifacts=artifacts)
 
-        def observe(check: Checkpoint) -> Evidence | None:
-            result = browser.invoke("saved-row", "create", "snapshot", {}, read_only=True)
+        def observe(check: Checkpoint, sample: int) -> Evidence | None:
+            result = browser.invoke(f"{check.id}:sample:{sample}", "create", "snapshot", {}, read_only=True)
             if result.outcome is not Outcome.RETURNED or result.artifact_id is None:
                 return None
             snapshot = "\n".join(

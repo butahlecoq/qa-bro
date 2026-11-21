@@ -30,7 +30,7 @@ class RunnerTests(unittest.TestCase):
         browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
         attempt = run_scenario(
             scenario, browser, lambda step: Action("click", {"label": step.action}),
-            lambda checkpoint: Evidence(monotonic_ns(), "missing-record", False),
+            lambda checkpoint, sample: Evidence(monotonic_ns(), "missing-record", False),
         )
         self.assertEqual(actions, ["Open", "Save"])
         self.assertEqual(attempt.verdict, Verdict.FAIL)
@@ -66,7 +66,7 @@ class RunnerTests(unittest.TestCase):
         bindings = AttemptBindings({"name": Literal("Example")}, seed=1, base_time=datetime.now(UTC))
         attempt = run_scenario(
             scenario, browser, lambda step: self.fail("Expected selected recipe"),
-            lambda check: Evidence(monotonic_ns(), "wrong-name", False),
+            lambda check, sample: Evidence(monotonic_ns(), "wrong-name", False),
             choose=lambda step: recipe, applicable=lambda recipe: True, bindings=bindings,
         )
         self.assertEqual(calls, [("type", {"text": "Example"})])
@@ -93,7 +93,7 @@ class RunnerTests(unittest.TestCase):
         browser = BrowserCalls(*args, budget=budget)
         scenario = Scenario("Open, save", (Step("open", "Open"), Step("save", "Save")))
         attempt = run_scenario(
-            scenario, browser, lambda step: Action("click", {}), lambda check: None,
+            scenario, browser, lambda step: Action("click", {}), lambda check, sample: None,
         )
         self.assertEqual(calls, ["snapshot", "click"])
         self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
@@ -117,10 +117,34 @@ class RunnerTests(unittest.TestCase):
             lambda value: value, budget=Budget(browser_calls=1, model_calls=0, seconds=10),
         )
 
-        def observe(checkpoint):
+        def observe(checkpoint, sample):
             browser.invoke("inspect", "save", "snapshot", {}, read_only=True)
 
         attempt = run_scenario(scenario, browser, lambda _: Action("click", {}), observe)
         self.assertEqual(attempt.verdict, Verdict.INCONCLUSIVE)
         self.assertEqual(attempt.observations, {"saved": "unverified", "closed": "not_reached"})
         self.assertEqual(journal.events("attempt")[-1][3]["verdict"], "INCONCLUSIVE")
+
+    def test_eventual_checkpoint_journals_each_sample_under_a_unique_id(self):
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        scenario = Scenario("Save", (
+            Step("save", "Save", (Checkpoint("saved", "Saved", wait_ns=1_000_000_000),)),
+        ))
+        browser = BrowserCalls(
+            journal, "attempt", "shared", "tab",
+            lambda *_: {"content": [{"type": "text", "text": "returned"}]},
+            lambda value: value,
+        )
+
+        def observe(checkpoint, sample):
+            event = f"{checkpoint.id}:sample:{sample}"
+            browser.invoke(event, "save", "snapshot", {}, read_only=True)
+            return Evidence(monotonic_ns(), f"snapshot-{sample}", sample == 1)
+
+        attempt = run_scenario(scenario, browser, lambda _: Action("click", {}), observe)
+        self.assertEqual(attempt.verdict, Verdict.PASS)
+        events = [event for _, event, kind, _ in journal.events("attempt") if kind == "tool_start"]
+        self.assertEqual(events, ["step-0:start", "saved:sample:0:start", "saved:sample:1:start"])

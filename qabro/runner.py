@@ -52,7 +52,7 @@ def run_scenario(
     scenario: Scenario,
     browser: BrowserCalls,
     resolve: Callable[[Step], Action],
-    observe: Callable[[Checkpoint], Evidence | None],
+    observe: Callable[[Checkpoint, int], Evidence | None],
     *,
     choose: Callable[[Step], Recipe | None] | None = None,
     applicable: Callable[[Recipe], bool] | None = None,
@@ -132,12 +132,14 @@ def run_scenario(
 
 
 def _observe(
-    window: CheckWindow, observe: Callable[[Checkpoint], Evidence | None]
+    window: CheckWindow, observe: Callable[[Checkpoint, int], Evidence | None]
 ) -> tuple[Evidence | None, Observation]:
     last_evidence = None
     deadline = window.opened_ns + window.checkpoint.wait_ns
+    sample = 0
     while True:
-        evidence = observe(window.checkpoint)
+        evidence = observe(window.checkpoint, sample)
+        sample += 1
         if evidence is not None and (window.checkpoint.wait_ns == 0 or evidence.observed_ns <= deadline):
             last_evidence = evidence
         now = monotonic_ns()
