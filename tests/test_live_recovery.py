@@ -104,3 +104,59 @@ class LiveRecoveryTests(unittest.TestCase):
         clicks = [event for _, event, kind, data in journal.events(tab)
                   if kind == "tool_start" and data["tool"] == "click"]
         self.assertEqual(clicks, ["step-3:start"])
+
+    def test_workers_share_browser_context_and_only_opener_owns_popup(self):
+        from qabro.browser import Outcome, claim_child_tabs
+
+        url = os.environ["QABRO_FIXTURE_URL"]
+        parsed = urlsplit(url)
+        self.assertIn(parsed.hostname, ("127.0.0.1", "localhost"))
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        path = Path(self.enterContext(TemporaryDirectory())) / "tabs.sqlite"
+        journal = Journal(path)
+        tabs = [f"worker-{uuid4().hex[:12]}" for _ in range(2)]
+        children = ()
+        with BrowseTransport(os.environ.get("QABRO_BROWSE", "browse")) as live:
+            try:
+                browsers = []
+                for tab in tabs:
+                    live.prepare_tab(tab, allowed_origins=(origin,))
+                    journal.start(tab, "shared-run", tab)
+                    self.assertTrue(journal.claim_tab("shared", tab, tab))
+                    browser = BrowserCalls(journal, tab, "shared", tab, live, lambda value: value)
+                    self.assertIs(browser.invoke("open", "open", "navigate", {"url": url}).outcome,
+                                  Outcome.RETURNED)
+                    browsers.append(browser)
+                parent, other = browsers
+                cookie = f"{parent.tab}=shared; path=/"
+                self.assertIs(parent.invoke("cookie", "fixture-context", "eval", {
+                    "expression": "(element, cookie) => { document.cookie = cookie; return true; }",
+                    "arg": cookie,
+                }).outcome, Outcome.RETURNED)
+                shared = other.invoke("cookie", "fixture-context", "eval", {
+                    "expression": "document.cookie",
+                }, read_only=True)
+                self.assertIs(shared.outcome, Outcome.RETURNED)
+                self.assertIn(f"{parent.tab}=shared", str(shared.raw))
+                opened = parent.invoke("popup", "popup", "eval", {
+                    "expression": "window.open(location.href, '_blank'); true",
+                })
+                self.assertIs(opened.outcome, Outcome.RETURNED)
+                from time import sleep
+
+                for sample in range(10):
+                    children = claim_child_tabs(parent, f"tabs-{sample}", "popup")
+                    if children:
+                        break
+                    sleep(0.1)
+                self.assertEqual(len(children), 1)
+                child, = children
+                self.assertFalse(Journal(path).claim_tab("shared", child, other.attempt, parent=other.tab))
+                self.assertEqual(claim_child_tabs(other, "tabs", "popup"), ())
+            finally:
+                live(tabs[0], "eval", {
+                    "expression": "(element, cookie) => { document.cookie = cookie; }",
+                    "arg": f"{tabs[0]}=; path=/; Max-Age=0",
+                })
+                for tab in (*tabs, *children):
+                    live.request("tools/call", {"name": "tabs", "arguments": {"action": "close", "tab": tab}})
