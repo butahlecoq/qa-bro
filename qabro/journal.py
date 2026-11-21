@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -63,10 +64,13 @@ class Journal:
         self, attempt: str, event: str, kind: str, payload: dict, *,
         reserve: bool = False, tab: tuple[str, str] | None = None,
         resources: tuple[str, ...] = (),
+        authorize: Callable[[sqlite3.Connection], None] | None = None,
     ) -> int:
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
+            if authorize is not None:
+                authorize(db)
             if tab is not None:
                 owner = db.execute(
                     "SELECT attempt_id FROM tab_leases WHERE context_id=? AND tab_id=?", tab

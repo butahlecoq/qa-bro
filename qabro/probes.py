@@ -23,6 +23,8 @@ def run_next_probe(
     recover: Callable[[Job, BrowserCalls], dict | None] | None = None,
 ) -> bool:
     """Use a stable attempt and dedicated tab for a host-configured probe."""
+    if queue.path.resolve() != journal.path.resolve():
+        raise ValueError("A probe needs its queue and journal in the same database")
     if foreground_busy():
         return False
     job = queue.claim("probe", now_ns=clock(), lease_ns=60_000_000_000)
@@ -45,6 +47,7 @@ def run_next_probe(
     browser = BrowserCalls(
         journal, attempt, context, tab, transport, redact, resources=tuple(resources),
         budget=Budget(browser_calls=20, model_calls=2, seconds=30),
+        authorize=lambda db: queue.require_lease(db, job, clock()),
     )
     previous = {event: payload for _, event, _, payload in journal.events(attempt)}
     result = previous.get("probe:result")
@@ -58,7 +61,7 @@ def run_next_probe(
             result = execute(job, browser)
         if result is None or journal.actions_to_reconcile(attempt):
             return False
-        journal.append(attempt, "probe:result", "probe_result", result)
+        journal.append(attempt, "probe:result", "probe_result", result, authorize=browser.authorize)
     journal.release_resources(attempt)
     journal.release_tab(context, tab, attempt)
     return queue.complete(job, result, now_ns=clock())

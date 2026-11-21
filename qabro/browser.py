@@ -1,6 +1,7 @@
 """Observe ordinary and replayed browser calls at the same boundary."""
 
 import json
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -55,6 +56,7 @@ class BrowserCalls:
         budget: Budget | None = None,
         artifacts: ArtifactStore | None = None,
         resources: tuple[str, ...] = (),
+        authorize: Callable[[sqlite3.Connection], None] | None = None,
     ):
         self.journal = journal
         self.attempt = attempt
@@ -65,6 +67,7 @@ class BrowserCalls:
         self.budget = budget
         self.artifacts = artifacts
         self.resources = resources
+        self.authorize = authorize
 
     def invoke(
         self, action: str, step: str, tool: str, arguments: dict, *, read_only: bool = False,
@@ -74,7 +77,7 @@ class BrowserCalls:
         self.journal.append(
             self.attempt, f"{action}:start", "tool_start",
             {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments), "read_only": read_only},
-            reserve=True, tab=(self.context, self.tab), resources=self.resources,
+            reserve=True, tab=(self.context, self.tab), resources=self.resources, authorize=self.authorize,
         )
         started = monotonic_ns()
         try:

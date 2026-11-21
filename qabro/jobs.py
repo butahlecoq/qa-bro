@@ -74,6 +74,15 @@ class JobQueue:
             job_id, job_kind, payload = row
             return Job(job_id, job_kind, json.loads(payload), lease)
 
+    @staticmethod
+    def require_lease(db: sqlite3.Connection, job: Job, now_ns: int) -> None:
+        row = db.execute(
+            "SELECT 1 FROM jobs WHERE id=? AND lease=? AND expires_ns>? AND result IS NULL",
+            (job.id, job.lease, now_ns),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Job lease is no longer active")
+
     def complete(self, job: Job, result: dict, *, now_ns: int) -> bool:
         encoded = json.dumps(result, sort_keys=True, allow_nan=False)
         with closing(sqlite3.connect(self.path)) as db, db:

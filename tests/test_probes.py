@@ -69,3 +69,23 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(run_next_probe(JobQueue(path), Journal(path), **args, clock=lambda: 60_000_000_000))
         self.assertEqual(calls, ["click", "snapshot"])
         self.assertIsNone(queue.claim("probe", now_ns=120_000_000_000, lease_ns=1))
+
+    def test_expired_probe_cannot_start_a_browser_call(self):
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, queue = Journal(path), JobQueue(path)
+        queue.enqueue("old", "probe", {"resources": ["fixture:probe-record"]})
+        now = 0
+
+        def execute(job, browser):
+            nonlocal now
+            now = 60_000_000_000
+            self.assertIsNotNone(queue.claim("probe", now_ns=now, lease_ns=10))
+            browser.invoke("mutate", "probe", "click", {})
+            self.fail("Expired worker must not dispatch")
+
+        with self.assertRaisesRegex(PermissionError, "lease is no longer active"):
+            run_next_probe(
+                queue, journal, foreground_busy=lambda: False, context="shared",
+                transport=lambda *_: self.fail("Stale call reached browser"),
+                redact=lambda value: value, execute=execute, clock=lambda: now,
+            )
