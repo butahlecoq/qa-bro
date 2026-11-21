@@ -10,17 +10,19 @@ from qabro.budget import Budget
 
 
 class BrowseTransport:
-    def __init__(self, executable: str = "browse", *, timeout: float = 15, budget: Budget | None = None):
+    def __init__(self, executable: str = "browse", *, timeout: float = 15, budget: Budget | None = None,
+                 include_execute: bool = False):
         self.executable = executable
         self.timeout = timeout
         self.budget = budget
+        self.include_execute = include_execute
         self._buffer = bytearray()
         self._request_id = 0
 
     def __enter__(self):
         self._process = subprocess.Popen(
             [self.executable, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            env={**os.environ, "OPENCODE_BROWSER_TOOLS": "plain"},
+            env={**os.environ, "OPENCODE_BROWSER_TOOLS": "all" if self.include_execute else "plain"},
         )
         self._selector = selectors.DefaultSelector()
         self._selector.register(self._process.stdout, selectors.EVENT_READ)
