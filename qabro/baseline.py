@@ -21,6 +21,12 @@ from qabro.runner import Action, Parameter, Recipe, RecipeStep, run_scenario
 from qabro.skills import RunSkills
 
 
+def has_saved_row(snapshot: str, expected: str) -> bool:
+    """Match the whole accessible name of exactly one fixture list item."""
+    row = f"- listitem {json.dumps(expected, ensure_ascii=False)}"
+    return sum(line.strip() == row for line in snapshot.splitlines()) == 1
+
+
 def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: bool = False) -> dict:
     journal = Journal(database)
     artifacts = ArtifactStore(database)
@@ -80,7 +86,7 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
             if not isinstance(selected, Option):
                 return None
             expected = f"Baseline sample | 2027-01-20 | {selected.id}"
-            return Evidence(monotonic_ns(), result.artifact_id, expected in snapshot)
+            return Evidence(monotonic_ns(), result.artifact_id, has_saved_row(snapshot, expected))
 
         def read_options(key):
             return read_native_options(browser, "category-options", "category", "select[name=category]")
