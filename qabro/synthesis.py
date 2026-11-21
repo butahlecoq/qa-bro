@@ -1,10 +1,13 @@
 """Prepare a text hint through a model adapter using recorded trace evidence."""
 
 import json
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from qabro.explorer import HintDraft
 from qabro.jobs import Job
+from qabro.opencode_metrics import summarize
 
 
 def synthesize_hint(
@@ -38,3 +41,28 @@ def synthesize_hint(
     ):
         raise ValueError("Synthesis must identify the claimed variants")
     return HintDraft(summary, hint, tuple(variants), True, tokens, 0)
+
+
+def ask_opencode(
+    prompt: str, *, workspace: Path, model: str, timeout: float = 60,
+) -> tuple[str, int]:
+    """Run a configured text-only OpenCode project and extract its JSON reply."""
+    config = json.loads((workspace / "opencode.json").read_text())
+    if config != {"permission": {"*": "deny"}}:
+        raise ValueError("Synthesis requires a dedicated OpenCode project with all tools denied")
+    result = subprocess.run(
+        ["opencode", "--standalone", "run", "--archived", "--format", "json", "-m", model, prompt],
+        cwd=workspace, text=True, capture_output=True, timeout=timeout,
+    )
+    events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    if result.returncode or any(event["type"] in {"tool_use", "error"} for event in events):
+        raise RuntimeError("OpenCode did not complete a text-only synthesis")
+    usage = summarize(result.stdout.splitlines())
+    if not usage["model_steps_completed"]:
+        raise RuntimeError("OpenCode did not report a completed model step")
+    reply = "".join(event["part"]["text"] for event in events if event["type"] == "text").strip()
+    if reply.startswith("```json\n") and reply.endswith("\n```"):
+        reply = reply[len("```json\n"):-len("\n```")]
+    tokens = usage["input_tokens"] + usage["output_tokens"] + usage["reasoning_tokens"]
+    tokens += usage["cache_read_tokens"] + usage["cache_write_tokens"]
+    return reply, tokens
