@@ -40,6 +40,10 @@ class Catalog:
                 CREATE TABLE IF NOT EXISTS active_skills (
                     id TEXT PRIMARY KEY, row_id INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS quarantined_skills (
+                    row_id INTEGER PRIMARY KEY REFERENCES skill_revisions(row_id),
+                    reason TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS catalog_runs (id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS pinned_skills (
                     run_id TEXT NOT NULL, row_id INTEGER NOT NULL,
@@ -65,6 +69,45 @@ class Catalog:
                 "INSERT INTO active_skills VALUES (?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET row_id=excluded.row_id",
                 (ref.id, row_id),
+            )
+
+    def quarantine(self, ref: SkillRef, reason: str) -> None:
+        """Exclude a revision from future runs and restore a compatible predecessor."""
+        if not reason.strip():
+            raise ValueError("Quarantine requires a reason")
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT row_id FROM skill_revisions WHERE id=? AND revision=?",
+                (ref.id, ref.revision),
+            ).fetchone()
+            if row is None:
+                raise KeyError((ref.id, ref.revision))
+            (row_id,) = row
+            db.execute(
+                "INSERT OR IGNORE INTO quarantined_skills VALUES (?, ?)", (row_id, reason)
+            )
+            affected = db.execute(
+                "DELETE FROM active_skills WHERE id=? AND row_id=?", (ref.id, row_id)
+            )
+            if not affected.rowcount:
+                return
+            db.execute(
+                """
+                INSERT INTO active_skills
+                SELECT previous.id, previous.row_id
+                FROM skill_revisions previous
+                JOIN skill_revisions current ON current.row_id=?
+                WHERE previous.id=current.id AND previous.row_id<current.row_id
+                  AND previous.platform=current.platform AND previous.component=current.component
+                  AND previous.context=current.context AND previous.role=current.role
+                  AND previous.capabilities=current.capabilities
+                  AND NOT EXISTS (
+                    SELECT 1 FROM quarantined_skills q WHERE q.row_id=previous.row_id
+                  )
+                ORDER BY previous.row_id DESC LIMIT 1
+                """,
+                (row_id,),
             )
 
     def pin(self, run: str) -> None:
