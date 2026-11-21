@@ -39,3 +39,26 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(result["net_saved_tokens"], 5)
         self.assertEqual(result["incorrect_reuses"], 1)
         self.assertEqual(result["comparable_uses"], 2)
+
+    def test_release_requires_quality_evidence_and_measurable_full_cost_savings(self):
+        from qabro.pilot import ReleaseEvidence, release_report
+
+        case = Case("defective", "create", Verdict.FAIL)
+        trials = [
+            Trial(case, mode, "same", Verdict.FAIL, 12, 100 if mode is Mode.BASELINE else 50)
+            for mode in Mode
+        ]
+        learning = {Mode.HYBRID: LearningCost(10, 20)}
+        proof = ReleaseEvidence(frozenset({"saved"}), frozenset({"saved"}), 0)
+        evidence = {"defective": proof}
+        args = (frozenset(), learning)
+        self.assertTrue(release_report(trials, *args, evidence, minimum_tokens_saved=20)["ready"])
+        self.assertFalse(release_report(trials, *args, evidence, minimum_tokens_saved=21)["ready"])
+        self.assertFalse(release_report(trials, *args, {}, minimum_tokens_saved=20)["ready"])
+        self.assertFalse(release_report(
+            trials, *args, {"defective": replace(proof, duplicate_effects=1)}, minimum_tokens_saved=20,
+        )["ready"])
+        trials[-1] = replace(trials[-1], verdict=Verdict.PASS)
+        report = release_report(trials, *args, evidence, minimum_tokens_saved=20)
+        self.assertEqual(report["new_false_pass_cases"], ["defective"])
+        self.assertFalse(report["ready"])

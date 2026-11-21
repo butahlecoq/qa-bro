@@ -129,3 +129,53 @@ def skill_break_even(
         "net_saved_tokens": net,
         "first_positive_use": first_positive_use,
     }
+
+
+@dataclass(frozen=True)
+class ReleaseEvidence:
+    mandatory_condition_ids: frozenset[str]
+    reported_condition_ids: frozenset[str]
+    duplicate_effects: int | None
+
+
+def release_report(
+    trials: list[Trial],
+    training_workflows: frozenset[str],
+    learning: dict[Mode, LearningCost],
+    evidence: dict[str, ReleaseEvidence],
+    *,
+    minimum_tokens_saved: int,
+) -> dict:
+    """Evaluate the initial release against a preselected total token savings target."""
+    if minimum_tokens_saved <= 0:
+        raise ValueError("The minimum measurable improvement must be positive")
+    metrics = frozen_catalog_report(trials, training_workflows, learning)
+    baseline = {trial.case.id: trial for trial in trials if trial.mode is Mode.BASELINE}
+    hybrid = [trial for trial in trials if trial.mode is Mode.HYBRID]
+    new_false_passes = [
+        trial.case.id for trial in hybrid
+        if trial.case.expected is Verdict.FAIL and trial.verdict is Verdict.PASS
+        and baseline[trial.case.id].verdict is not Verdict.PASS
+    ]
+    missing_checks = []
+    duplicate_effects = []
+    for trial in hybrid:
+        case_id = trial.case.id
+        proof = evidence.get(case_id)
+        if proof is None or not proof.mandatory_condition_ids <= proof.reported_condition_ids:
+            missing_checks.append(case_id)
+        if proof is None or proof.duplicate_effects != 0:
+            duplicate_effects.append(case_id)
+
+    saved = metrics[Mode.BASELINE]["total_tokens"] - metrics[Mode.HYBRID]["total_tokens"]
+    includes_controlled_defects = metrics[Mode.BASELINE]["controlled_defects"] > 0
+    return {
+        "new_false_pass_cases": new_false_passes,
+        "missing_check_results": missing_checks,
+        "duplicate_or_unverified_effect_cases": duplicate_effects,
+        "includes_controlled_defects": includes_controlled_defects,
+        "tokens_saved": saved,
+        "minimum_tokens_saved": minimum_tokens_saved,
+        "ready": includes_controlled_defects and saved >= minimum_tokens_saved
+        and not (new_false_passes or missing_checks or duplicate_effects),
+    }
