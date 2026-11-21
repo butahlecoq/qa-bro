@@ -78,3 +78,19 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual([job.payload["skill"]["revision"] for job in jobs], ["1", "2"])
         self.assertEqual([job.payload["scope"]["context"] for job in jobs], ["requirements"] * 2)
         self.assertIsNone(queue.claim("revalidate", now_ns=1, lease_ns=10))
+
+    def test_changed_component_fingerprint_survives_restart_and_schedules_revalidation(self):
+        directory = self.enterContext(TemporaryDirectory())
+        path = Path(directory) / "catalog.sqlite"
+        catalog = Catalog(path)
+        scope = Scope("fixture", "combobox", "requirements", "editor")
+        ref = SkillRef("category", "1", "Select category")
+        self.assertEqual(catalog.observe_component(scope, "before"), [])
+        catalog.seed_verified_hint(ref, scope, "Choose the category")
+        catalog = Catalog(path)
+        self.assertEqual(catalog.observe_component(scope, "before"), [])
+        self.assertEqual(catalog.observe_component(scope, "after"), [ref])
+        self.assertEqual(catalog.observe_component(scope, "after"), [])
+        catalog.pin("later")
+        self.assertEqual(catalog.search("later", "category", scope, frozenset()), [])
+        self.assertEqual(catalog.jobs.claim("revalidate", now_ns=1, lease_ns=10).payload["skill"]["id"], ref.id)
