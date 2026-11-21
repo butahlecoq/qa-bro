@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
+from time import time_ns
 
 
 class DuplicateEvent(Exception):
@@ -21,6 +22,11 @@ class Journal:
                     id TEXT PRIMARY KEY,
                     run_id TEXT NOT NULL,
                     worker_id TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS finished_attempts (
+                    attempt_id TEXT PRIMARY KEY REFERENCES attempts(id),
+                    finished_ns INTEGER NOT NULL,
+                    pruned INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     attempt_id TEXT NOT NULL REFERENCES attempts(id),
@@ -69,6 +75,10 @@ class Journal:
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM finished_attempts WHERE attempt_id=? AND pruned=1", (attempt,),
+            ).fetchone():
+                raise ValueError("Attempt evidence has been pruned")
             if authorize is not None:
                 authorize(db)
             if tab is not None:
@@ -94,7 +104,7 @@ class Journal:
                 if reserve:
                     raise DuplicateEvent(event)
                 return sequence
-            return db.execute(
+            sequence = db.execute(
                 """
                 INSERT INTO events
                 SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?
@@ -103,6 +113,54 @@ class Journal:
                 """,
                 (attempt, event, kind, encoded, attempt),
             ).fetchone()[0]
+
+            if kind == "scenario_finish":
+                db.execute("INSERT INTO finished_attempts VALUES (?, ?, 0)", (attempt, time_ns()))
+            return sequence
+
+    def prune(self, *, before_ns: int, max_payload_bytes: int) -> int:
+        """Retain incomplete runs and evidence protected by live references."""
+        if max_payload_bytes < 0:
+            raise ValueError("Journal size limit must be nonnegative")
+        from qabro.artifacts import ArtifactStore
+        ArtifactStore(self.path)
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            total = db.execute("SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM events").fetchone()[0]
+            runs = db.execute("""
+                SELECT a.run_id, MAX(f.finished_ns)
+                FROM attempts a LEFT JOIN finished_attempts f ON f.attempt_id=a.id
+                GROUP BY a.run_id
+                HAVING COUNT(*)=COUNT(f.attempt_id) AND MIN(f.pruned)=0 AND MAX(f.pruned)=0
+                ORDER BY MAX(f.finished_ns), a.run_id
+            """).fetchall()
+            for run, finished_ns in runs:
+                if finished_ns >= before_ns and total <= max_payload_bytes:
+                    continue
+                ids = [row[0] for row in db.execute("SELECT id FROM attempts WHERE run_id=?", (run,))]
+                if any(self._protected(db, attempt) for attempt in ids):
+                    continue
+                for attempt in ids:
+                    size = db.execute(
+                        "SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM events WHERE attempt_id=?",
+                        (attempt,),
+                    ).fetchone()[0]
+                    db.execute("DELETE FROM events WHERE attempt_id=?", (attempt,))
+                    db.execute("UPDATE finished_attempts SET pruned=1 WHERE attempt_id=?", (attempt,))
+                    total -= size
+            return total
+
+    def _protected(self, db: sqlite3.Connection, attempt: str) -> bool:
+        if db.execute("""
+            SELECT 1 FROM tab_leases WHERE attempt_id=?
+            UNION ALL SELECT 1 FROM resource_leases WHERE attempt_id=?
+            UNION ALL SELECT 1 FROM events e JOIN artifact_pins p
+                      ON p.artifact_id=COALESCE(json_extract(e.payload, '$.artifact_id'),
+                                               json_extract(e.payload, '$.evidence_id'))
+                      WHERE e.attempt_id=? LIMIT 1
+        """, (attempt, attempt, attempt)).fetchone():
+            return True
+        return bool(self._actions_to_reconcile(self._events(db, attempt)))
 
     def events(self, attempt: str) -> list[tuple[int, str, str, dict]]:
         with closing(self._connect()) as db:

@@ -51,3 +51,20 @@ class JournalTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.journal.release_resources("a")
         self.assertFalse(self.journal.claim_resources("b", ("record:42",)))
+
+    def test_prune_keeps_full_retry_history_while_any_evidence_is_pinned(self):
+        from qabro.artifacts import ArtifactStore
+
+        store = ArtifactStore(self.path)
+        proof = store.put(b"previous failure", now=0, owner="skill")
+        self.journal.append("a", "check:saved", "checkpoint", {"artifact_id": proof})
+        self.journal.append("a", "scenario:finish", "scenario_finish", {"verdict": "FAIL"})
+        self.journal.append("b", "scenario:finish", "scenario_finish", {"verdict": "PASS"})
+        self.assertGreater(self.journal.prune(before_ns=0, max_payload_bytes=0), 0)
+        self.assertTrue(self.journal.events("b"))
+        store.unpin("skill")
+        self.assertEqual(self.journal.prune(before_ns=0, max_payload_bytes=0), 0)
+        self.assertEqual(self.journal.events("a"), [])
+        self.assertEqual(self.journal.events("b"), [])
+        with self.assertRaisesRegex(ValueError, "pruned"):
+            self.journal.append("a", "scenario:start", "scenario_start", {})
