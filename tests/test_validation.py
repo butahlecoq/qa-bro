@@ -165,3 +165,28 @@ class ValidationTests(unittest.TestCase):
         self.assertCountEqual(found, [replacement, expected])
         self.assertEqual(catalog.load_recipe("after-both-branches", expected),
                          replace(fallback_recipe, id=expected.id, revision=expected.revision))
+
+    def test_defect_trial_requires_same_observed_failure_through_recipe(self):
+        from qabro.journal import Journal
+        from qabro.runner import Recipe, RecipeStep
+        from qabro.validation import DefectTrial, _defect_evidence
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        recipe = Recipe("candidate", "1", (RecipeStep(Step("save", "Save"), "click", ()),))
+        for attempt, verdict in (("plain", Verdict.FAIL), ("replay", Verdict.FAIL), ("masked", Verdict.PASS)):
+            journal.start(attempt, attempt, "validator")
+            journal.append(attempt, "scenario:start", "scenario_start", {"contract_revision": "same"})
+            if attempt != "plain":
+                journal.append(attempt, "recipe:0", "recipe_selected", {"fingerprint": recipe.fingerprint})
+                journal.append(attempt, "step-0:recipe", "recipe_action", {"action": "step-0", "fallback": False})
+                journal.append(attempt, "step-0:finish", "tool_finish", {"outcome": "returned"})
+            if verdict is Verdict.FAIL:
+                journal.append(attempt, "check:saved", "checkpoint", {
+                    "outcome": Observation.MISMATCH, "artifact_id": f"{attempt}-proof",
+                })
+            journal.append(attempt, "scenario:finish", "scenario_finish", {"verdict": verdict})
+        self.assertEqual(
+            _defect_evidence(journal, DefectTrial("plain", "replay"), recipe),
+            {"plain-proof", "replay-proof"},
+        )
+        self.assertIsNone(_defect_evidence(journal, DefectTrial("plain", "masked"), recipe))

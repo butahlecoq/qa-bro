@@ -42,6 +42,12 @@ class ValidationRun:
     attempt_id: str | None = None
 
 
+@dataclass(frozen=True)
+class DefectTrial:
+    plain_attempt: str
+    recipe_attempt: str
+
+
 def eligible(candidate: HintCandidate, runs: tuple[ValidationRun, ...]) -> bool:
     if len(runs) < 3:
         return False
@@ -83,6 +89,7 @@ def validate_next_hint(
     validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
     *,
     clock: Callable[[], int] = time_ns,
+    defect_trials: Callable[[HintCandidate], tuple[DefectTrial, ...]] | None = None,
 ) -> bool:
     """Validate a queued draft and commit publication with the job result."""
     queue = catalog.jobs
@@ -98,7 +105,11 @@ def validate_next_hint(
         ref, Scope(**draft["scope"]), draft["hint"], frozenset(draft["variants"]),
         draft["variable_inputs"], frozenset(draft.get("capabilities", ())), recipe,
     )
-    return _validate_job(catalog, job, candidate, validate, clock)
+    trials = defect_trials(candidate) if defect_trials else ()
+    return _validate_job(
+        catalog, job, candidate, validate, clock, trials,
+        require_defect_trial=defect_trials is not None,
+    )
 
 
 def revalidate_next_hint(
@@ -178,17 +189,61 @@ def _recipe_branch_outcomes(selection: str, payload: dict, entries: dict) -> dic
     return outcomes
 
 
+def _defect_evidence(
+    journal: Journal, trial: DefectTrial, recipe: Recipe | None,
+) -> set[str] | None:
+    if trial.plain_attempt == trial.recipe_attempt or recipe is None:
+        return None
+    traces = [journal.events(attempt) for attempt in (trial.plain_attempt, trial.recipe_attempt)]
+    entries = [{event: payload for _, event, _, payload in trace} for trace in traces]
+    plain, replay = entries
+    revision = plain.get("scenario:start", {}).get("contract_revision")
+    if not revision or replay.get("scenario:start", {}).get("contract_revision") != revision:
+        return None
+    if any(events.get("scenario:finish", {}).get("verdict") != Verdict.FAIL for events in entries):
+        return None
+    if any(kind == "recipe_selected" for _, _, kind, _ in traces[0]):
+        return None
+    if not any(
+        kind == "recipe_selected" and payload.get("fingerprint") == recipe.fingerprint
+        for _, _, kind, payload in traces[1]
+    ) or not any(
+        kind == "recipe_action" and not payload.get("fallback")
+        and replay.get(f"{payload.get('action')}:finish", {}).get("outcome") == "returned"
+        for _, _, kind, payload in traces[1]
+    ):
+        return None
+    mismatches = [
+        {event: payload.get("artifact_id") for _, event, kind, payload in trace
+         if kind == "checkpoint" and payload.get("outcome") == Observation.MISMATCH}
+        for trace in traces
+    ]
+    if not mismatches[0] or mismatches[0].keys() != mismatches[1].keys():
+        return None
+    references = set(mismatches[0].values()) | set(mismatches[1].values())
+    return references if all(isinstance(ref, str) and ref for ref in references) else None
+
+
 def _validate_job(
     catalog: Catalog, job: Job, candidate: HintCandidate,
     validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
     clock: Callable[[], int],
+    trials: tuple[DefectTrial, ...] = (),
+    *,
+    require_defect_trial: bool = False,
 ) -> bool:
     runs = validate(candidate)
     store = ArtifactStore(catalog.path)
     journal = Journal(catalog.path)
     references = set()
     branches = {}
-    accepted = eligible(candidate, runs)
+    accepted = eligible(candidate, runs) and (bool(trials) or not require_defect_trial)
+    for trial in trials:
+        proof = _defect_evidence(journal, trial, candidate.recipe)
+        if proof is None:
+            accepted = False
+        else:
+            references.update(proof)
     if len({run.attempt_id for run in runs}) != len(runs):
         accepted = False
     for run in runs:
