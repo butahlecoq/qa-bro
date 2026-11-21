@@ -55,12 +55,15 @@ class ArgumentBranch:
 
     max_samples: int = 1
     max_wait_ns: int | None = None
+    condition: RecipeCheck | None = None
 
     def __post_init__(self):
         if type(self.max_samples) is not int or not 1 <= self.max_samples <= 20:
             raise ValueError("A branch requires between one and twenty samples")
         if self.max_wait_ns is not None and (type(self.max_wait_ns) is not int or self.max_wait_ns <= 0):
             raise ValueError("A branch deadline must be a positive number of nanoseconds")
+        if self.condition is not None and self.condition.probe != self.probe:
+            raise ValueError("A branch condition must use the branch probe")
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,18 @@ def expand_recipe(
 
     visit(recipe, frozenset())
     return tuple(steps)
+
+
+def _evaluate_recipe_check(
+    check: RecipeCheck, step: Step, observe: Callable[[Step, str], ProbeValue | None],
+    bindings: AttemptBindings, read_options: Callable[[str], Options] | None,
+) -> Evidence | None:
+    value = None
+    if check.binding is not None:
+        bound = bindings.resolve(check.binding, read_options)
+        value = bound.id if isinstance(bound, Option) else bound
+    observation = observe(step, check.probe)
+    return check.evaluate(observation, bound_value=value) if observation is not None else None
 
 
 def run_scenario(
@@ -235,6 +250,8 @@ def run_scenario(
                                 "steps": [item.id for item in covered],
                                 "branch_steps": [offset for offset, item in enumerate(expanded)
                                                  if item.branch is not None],
+                                "typed_branches": [offset for offset, item in enumerate(expanded)
+                                                   if item.branch is not None and item.branch.condition is not None],
                                 "guard_steps": {str(offset): item.guard_probe for offset, item in enumerate(expanded)
                                                 if item.guard is not None},
                             })
@@ -246,13 +263,7 @@ def run_scenario(
                         started = monotonic_ns()
                         proof = None
                         if isinstance(item.guard, RecipeCheck) and observe_recipe is not None:
-                            value = None
-                            if item.guard.binding is not None:
-                                bound = bindings.resolve(item.guard.binding, read_options)
-                                value = bound.id if isinstance(bound, Option) else bound
-                            observation = observe_recipe(step, item.guard.probe)
-                            if observation is not None:
-                                proof = item.guard.evaluate(observation, bound_value=value)
+                            proof = _evaluate_recipe_check(item.guard, step, observe_recipe, bindings, read_options)
                         elif isinstance(item.guard, str) and check_recipe_guard is not None:
                             proof = check_recipe_guard(step, item.guard)
                         guard_passed = (
@@ -266,11 +277,14 @@ def run_scenario(
                         })
                     branch_value = None
                     branch_event = None
-                    if guard_passed and item.branch is not None and probe_branch is not None:
-                        branch = item.branch
+                    branch = item.branch
+                    if guard_passed and branch is not None and (
+                        observe_recipe is not None if branch.condition is not None else probe_branch is not None
+                    ):
                         deadline = monotonic_ns() + (branch.max_wait_ns or 5_000_000_000)
                         samples = 0
                         timed_out = False
+                        branch_artifact = None
                         try:
                             with browser.budget.until(deadline) if browser.budget else nullcontext():
                                 for sample in range(branch.max_samples):
@@ -279,7 +293,16 @@ def run_scenario(
                                     if browser.budget:
                                         browser.budget.remaining_seconds()
                                     samples += 1
-                                    branch_value = probe_branch(step, branch.probe, sample)
+                                    if branch.condition is not None and observe_recipe is not None:
+                                        started = monotonic_ns()
+                                        proof = _evaluate_recipe_check(
+                                            branch.condition, step, observe_recipe, bindings, read_options,
+                                        )
+                                        if proof is not None and started <= proof.observed_ns <= monotonic_ns():
+                                            branch_value = proof.matches
+                                            branch_artifact = proof.artifact_id
+                                    elif probe_branch is not None:
+                                        branch_value = probe_branch(step, branch.probe, sample)
                                     if branch_value is not None:
                                         break
                         except (BudgetExhausted, TimeoutError):
@@ -293,6 +316,7 @@ def run_scenario(
                         journal.append(attempt_id, branch_event, "recipe_branch", {
                             "probe": branch.probe, "outcome": branch_value, "samples": samples,
                             **({"timed_out": True} if timed_out else {}),
+                            **({"artifact_id": branch_artifact} if branch_artifact is not None else {}),
                         })
                     fallback = not guard_passed or (item.branch is not None and branch_value is None)
                     action = (

@@ -181,6 +181,12 @@ def _recipe_step_evidence(selection: str, payload: dict, entries: dict) -> set[s
             return None
         if entries.get(f"{action_id}:finish", {}).get("outcome") != "returned":
             return None
+        if offset in payload.get("typed_branches", ()):
+            branch = entries.get(recorded.get("branch_event"), {})
+            reference = branch.get("artifact_id")
+            if type(branch.get("outcome")) is not bool or not isinstance(reference, str) or not reference:
+                return None
+            references.add(reference)
         probe = payload.get("guard_steps", {}).get(str(offset))
         if probe is not None:
             guard = entries.get(recorded.get("guard_event"), {})
