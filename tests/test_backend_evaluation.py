@@ -19,3 +19,24 @@ class BackendEvaluationTests(unittest.TestCase):
         result = evaluate_backend([*pairs[:-1], replace(pairs[-1], compiled=broken)], minimum_saved_ns=20)
         self.assertEqual(result["mismatches"], [TrialCase.PARTIAL_EFFECT])
         self.assertEqual(result["decision"], "plain")
+
+    def test_manifest_requires_the_pilot_selection_and_exact_validated_revision(self):
+        from dataclasses import asdict
+
+        from qabro.backend_evaluation import evaluate_manifest
+
+        pairs = []
+        for case, verdict in zip(TrialCase, (Verdict.PASS, Verdict.FAIL, Verdict.INCONCLUSIVE)):
+            plain = BackendRun("selected", (TraceEvent("save", "checkpoint", verdict, "state"),),
+                               verdict, 100, True)
+            pairs.append(asdict(BackendPair(case, plain, replace(plain, elapsed_ns=80))))
+        manifest = {
+            "recipe_fingerprint": "selected", "minimum_saved_ns": 20, "pairs": pairs,
+            "validated_recipe_fingerprints": ["older"],
+        }
+        self.assertEqual(evaluate_manifest(manifest)["decision"], "plain")
+        manifest["validated_recipe_fingerprints"] = ["selected"]
+        self.assertEqual(evaluate_manifest(manifest)["decision"], "compiled")
+        manifest["recipe_fingerprint"] = "unmeasured"
+        with self.assertRaisesRegex(ValueError, "selected from the pilot"):
+            evaluate_manifest(manifest)

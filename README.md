@@ -134,6 +134,8 @@ QABRO_FIXTURE_URL=http://127.0.0.1:18765/requirements.html \
   python -m unittest discover -s tests -p test_live_compiled_browser.py -v
 ```
 
+For the pilot decision, export `recipe_fingerprint`, `validated_recipe_fingerprints`, a positive `minimum_saved_ns` selected before comparison, and `pairs` for success, checkpoint failure, and partial effect. Each pair has `case`, `plain`, and `compiled` entries. Each backend run records its recipe fingerprint, ordered events, verdict, elapsed nanoseconds, and whether the trace is complete. Record evidence, relative deadlines, and retry events in the trace. Run `python -m qabro.backend_evaluation backend-trials.json` on the pilot host.
+
 ## Report a pilot
 
 Run the reporting command inside the environment that ran the pilot.
