@@ -43,12 +43,14 @@ class BrowserCalls:
         self,
         journal: Journal,
         attempt: str,
+        context: str,
         tab: str,
         call: Callable[[str, str, dict], object],
         redact: Callable[[object], object],
     ):
         self.journal = journal
         self.attempt = attempt
+        self.context = context
         self.tab = tab
         self.call = call
         self.redact = redact
@@ -56,8 +58,8 @@ class BrowserCalls:
     def invoke(self, action: str, step: str, tool: str, arguments: dict) -> ToolResult:
         self.journal.append(
             self.attempt, f"{action}:start", "tool_start",
-            {"step": step, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments)},
-            reserve=True,
+            {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments)},
+            reserve=True, tab=(self.context, self.tab),
         )
         started = monotonic_ns()
         try:

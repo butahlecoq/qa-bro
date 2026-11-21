@@ -55,10 +55,19 @@ class Journal:
             if owner != (run, worker):
                 raise ValueError("Attempt already belongs to a different run or worker")
 
-    def append(self, attempt: str, event: str, kind: str, payload: dict, *, reserve: bool = False) -> int:
+    def append(
+        self, attempt: str, event: str, kind: str, payload: dict, *,
+        reserve: bool = False, tab: tuple[str, str] | None = None,
+    ) -> int:
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
+            if tab is not None:
+                owner = db.execute(
+                    "SELECT attempt_id FROM tab_leases WHERE context_id=? AND tab_id=?", tab
+                ).fetchone()
+                if owner != (attempt,):
+                    raise PermissionError("Attempt does not own this browser tab")
             existing = db.execute(
                 "SELECT sequence, kind, payload FROM events WHERE attempt_id=? AND event_id=?",
                 (attempt, event),
@@ -108,3 +117,18 @@ class Journal:
                 "DELETE FROM tab_leases WHERE context_id=? AND tab_id=? AND attempt_id=?",
                 (context, tab, attempt),
             ).rowcount == 1
+
+    def actions_to_reconcile(self, attempt: str) -> list[tuple[str, dict]]:
+        """Return started actions without a known tool outcome or reconciliation."""
+        events = {event: (kind, payload) for _, event, kind, payload in self.events(attempt)}
+        actions = []
+        for event, (kind, payload) in events.items():
+            if kind != "tool_start":
+                continue
+            action = event.removesuffix(":start")
+            if f"{action}:reconciled" in events:
+                continue
+            finish = events.get(f"{action}:finish")
+            if finish is None or finish[1]["outcome"] != "returned":
+                actions.append((action, payload))
+        return actions

@@ -20,7 +20,11 @@ class BrowserTests(unittest.TestCase):
         def transport(tab, tool, arguments):
             raise TimeoutError("sensitive transport text")
 
-        browser = BrowserCalls(journal, "attempt", "tab", transport, lambda _: "[redacted]")
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda _: "[redacted]")
+        with self.assertRaises(PermissionError):
+            browser.invoke("save", "step-1", "click", {})
+        self.assertEqual(journal.events("attempt"), [])
+        journal.claim_tab("shared", "tab", "attempt")
         with self.assertRaises(TimeoutError):
             browser.invoke("save", "step-1", "click", {"secret": "value"})
         with self.assertRaises(DuplicateEvent):
@@ -29,3 +33,10 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(start[3]["arguments"], "[redacted]")
         self.assertEqual(finish[3]["outcome"], Outcome.UNKNOWN)
         self.assertEqual(finish[3]["raw"], {"exception": "TimeoutError"})
+
+        reopened = Journal(journal.path)
+        self.assertEqual(reopened.actions_to_reconcile("attempt"), [("save", start[3])])
+        reopened.append("attempt", "save:reconciled", "reconciliation", {
+            "artifact_id": "fresh-snapshot", "effect": "completed",
+        })
+        self.assertEqual(reopened.actions_to_reconcile("attempt"), [])
