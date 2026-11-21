@@ -9,6 +9,7 @@ from time import time_ns
 
 from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope
+from qabro.contract import Step
 from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
 from qabro.recipe_format import encode_recipe
@@ -32,6 +33,18 @@ def record_episode(journal: Journal, episode: Episode) -> None:
     del payload["attempt_id"]
     event = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     journal.append(episode.attempt_id, f"episode:{event}", "experience_episode", payload)
+
+
+def record_verified_steps(
+    journal: Journal, scope: Scope, attempt: str,
+    operation_for: Callable[[Step], str | None],
+) -> Callable[[Step, str, int], None]:
+    """Record approved operation labels from the scenario runner's verified steps."""
+    def record(step: Step, evidence_id: str, model_calls: int) -> None:
+        operation = operation_for(step)
+        if operation is not None:
+            record_episode(journal, Episode(scope, operation, attempt, evidence_id, model_calls))
+    return record
 
 
 def scan_experience(journal: Journal, queue: JobQueue) -> list[str]:

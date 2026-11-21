@@ -146,6 +146,7 @@ def run_scenario(
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
+    on_step_verified: Callable[[Step, str, int], None] | None = None,
 ) -> Attempt:
     """Execute each source step and stop on a failed or unverified required check."""
     journal = browser.journal
@@ -183,6 +184,7 @@ def run_scenario(
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:
                 break
+            model_before = browser.budget.counts()["model"] if browser.budget is not None else 0
             action_id = f"step-{index}"
             replayed = f"{action_id}:start" in saved
             if replayed:
@@ -278,6 +280,15 @@ def run_scenario(
                 for checkpoint in step.checkpoints
             ):
                 break
+            if on_step_verified is not None and not replayed:
+                proof = next(
+                    (artifacts[check.id] for check in step.checkpoints
+                     if check.required and check.id in artifacts),
+                    None,
+                )
+                if proof is not None:
+                    model_after = browser.budget.counts()["model"] if browser.budget is not None else 0
+                    on_step_verified(step, proof, model_after - model_before)
     except EnvironmentBlocked as error:
         blocked = True
         cause = Cause.ENVIRONMENT

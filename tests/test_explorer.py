@@ -129,3 +129,41 @@ class ExplorerTests(unittest.TestCase):
 
         self.assertTrue(explore_recorded(catalog, synthesize, clock=lambda: 2))
         self.assertIsNotNone(catalog.jobs.claim("validate_hint", now_ns=2, lease_ns=10))
+
+    def test_runner_reports_costed_successful_steps_to_explorer(self):
+        from time import monotonic_ns
+
+        from qabro.browser import BrowserCalls
+        from qabro.budget import Budget
+        from qabro.contract import Checkpoint, Scenario, Step
+        from qabro.evidence import Evidence
+        from qabro.explorer import record_verified_steps, scan_experience
+        from qabro.journal import Journal
+        from qabro.runner import Action, run_scenario
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        queue, journal = JobQueue(path), Journal(path)
+        scope = Scope("fixture", "select", "requirements", "editor")
+        step = Step("choose", "Choose category", (Checkpoint("selected", "Category selected"),))
+        for attempt in ("a", "b", "failed"):
+            journal.start(attempt, "run", "worker")
+            journal.claim_tab("shared", attempt, attempt)
+            budget = Budget(browser_calls=1, model_calls=2, seconds=10)
+            browser = BrowserCalls(journal, attempt, "shared", attempt,
+                                   lambda *_: {"content": [{"type": "text", "text": "ok"}]},
+                                   lambda value: value, budget=budget)
+
+            def resolve(_):
+                budget.consume("model")
+                budget.consume("model")
+                return Action("select", {})
+
+            run_scenario(
+                Scenario("Choose category", (step,)), browser, resolve,
+                lambda *_: Evidence(monotonic_ns(), f"proof-{attempt}", attempt != "failed"),
+                on_step_verified=record_verified_steps(journal, scope, attempt, lambda _: "category"),
+            )
+
+        self.assertEqual(len(scan_experience(journal, queue)), 1)
+        job = queue.claim("explore", now_ns=1, lease_ns=10)
+        self.assertEqual([source["attempt_id"] for source in job.payload["sources"]], ["a", "b"])
