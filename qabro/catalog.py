@@ -9,7 +9,7 @@ from pathlib import Path
 
 from qabro.jobs import JobQueue
 from qabro.recipe_format import decode_recipe, encode_recipe
-from qabro.runner import Recipe
+from qabro.runner import Recipe, RecipeStep
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,10 @@ class Catalog:
     ) -> None:
         if recipe is not None and (recipe.id, recipe.revision) != (ref.id, ref.revision):
             raise ValueError("Recipe and skill revision must match")
+        if recipe is not None:
+            tools = {step.tool for step in recipe.steps if isinstance(step, RecipeStep)}
+            if not tools <= capabilities:
+                raise ValueError("Recipe uses browser tools missing from its declared capabilities")
         row_id = db.execute(
             """
             INSERT INTO skill_revisions (

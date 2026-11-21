@@ -62,8 +62,11 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         ) + (RecipeStep(scenario.steps[3], "select", (
             ("selector", "select[name=category]"), ("values", Parameter("category")), ("by", "value"),
         )),))
-        catalog.seed_verified_hint(ref, scope, "Fill the name and due date.", recipe=recipe)
-        skills = RunSkills(catalog, attempt, scope, frozenset())
+        capabilities = frozenset({"fill", "select", "eval"})
+        catalog.seed_verified_hint(
+            ref, scope, "Fill the name, due date and category.", recipe=recipe, capabilities=capabilities,
+        )
+        skills = RunSkills(catalog, attempt, scope, capabilities)
         recipe_options = {
             "choose": lambda step: skills.select_recipe(step, lambda _, refs: refs[0]),
             "applicable": lambda _: True,

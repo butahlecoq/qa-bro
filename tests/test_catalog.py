@@ -108,7 +108,10 @@ class CatalogTests(unittest.TestCase):
             RecipeStep(step, "fill", (("selector", "input[name=name]"), ("value", Parameter("name")))),
         ))
         catalog.pin("before")
-        catalog.seed_verified_hint(ref, scope, "Fill the named field", recipe=recipe)
+        with self.assertRaisesRegex(ValueError, "declared capabilities"):
+            catalog.seed_verified_hint(ref, scope, "Fill the named field", recipe=recipe)
+        catalog.seed_verified_hint(ref, scope, "Fill the named field", recipe=recipe,
+                                   capabilities=frozenset({"fill"}))
         catalog.pin("after")
         reopened = Catalog(path)
         self.assertIsNone(reopened.load_recipe("before", ref))

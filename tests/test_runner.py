@@ -264,8 +264,9 @@ class RunnerTests(unittest.TestCase):
         scope = Scope("fixture", "form", "requirements", "editor")
         ref = SkillRef("save", "1", "Save requirements")
         recipe = Recipe(ref.id, ref.revision, (RecipeStep(step, "recipe-click", ()),))
-        catalog.seed_verified_hint(ref, scope, "Save the form", recipe=recipe)
-        skills = RunSkills(catalog, "run", scope, frozenset())
+        capabilities = frozenset({"recipe-click"})
+        catalog.seed_verified_hint(ref, scope, "Save the form", recipe=recipe, capabilities=capabilities)
+        skills = RunSkills(catalog, "run", scope, capabilities)
         called = []
 
         def transport(tab, tool, arguments):
