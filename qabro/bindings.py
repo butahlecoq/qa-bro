@@ -1,6 +1,7 @@
 """Scenario inputs resolved against the current attempt."""
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -95,6 +96,12 @@ class AttemptBindings:
         rules = {key: (type(rule).__name__, asdict(rule)) for key, rule in self._rules.items()}
         data = {"rules": rules, "seed": self.seed, "base_time": self.base_time.isoformat()}
         return sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+    def resolve(
+        self, key: str, read_options: Callable[[str], Options] | None = None,
+    ) -> str | Option:
+        options = read_options(key) if read_options is not None and isinstance(self._rules[key], Select) else None
+        return self.use(key, options=options)
 
     def use(self, key: str, *, options: Options | None = None) -> str | Option:
         """Resolve on first use and keep the selected identity for this attempt."""

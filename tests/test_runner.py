@@ -282,3 +282,36 @@ class RunnerTests(unittest.TestCase):
         )
         self.assertEqual(called, ["ordinary-click"])
         self.assertEqual(result.verdict, Verdict.PASS)
+
+    def test_recipe_selects_from_current_complete_options(self):
+        from datetime import UTC, datetime
+
+        from qabro.bindings import AttemptBindings, Option, Options, Select
+        from qabro.runner import Parameter, Recipe, RecipeStep
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        step = Step("select", "Select the last category")
+        scenario = Scenario(step.action, (step,))
+        recipe = Recipe("select-category", "1", (
+            RecipeStep(step, "select", (("value", Parameter("category")),)),
+        ))
+        dispatched = []
+
+        def call(tab, tool, arguments):
+            dispatched.append(arguments)
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        for complete, expected in ((False, Verdict.INCONCLUSIVE), (True, Verdict.PASS)):
+            attempt = str(complete)
+            journal.start(attempt, attempt, "worker")
+            journal.claim_tab("shared", attempt, attempt)
+            browser = BrowserCalls(journal, attempt, "shared", attempt, call, lambda value: value)
+            result = run_scenario(
+                scenario, browser, lambda _: self.fail("Expected recipe"), lambda *_: None,
+                choose=lambda _: recipe, applicable=lambda _: True,
+                bindings=AttemptBindings({"category": Select(last=True)}, seed=1, base_time=datetime.now(UTC)),
+                read_options=lambda _: Options((Option("a", "First"), Option("b", "Last")), complete),
+            )
+            self.assertEqual(result.verdict, expected)
+        self.assertEqual(dispatched, [{"value": "b"}])

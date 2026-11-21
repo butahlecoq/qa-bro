@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic_ns, sleep
 
-from qabro.bindings import AttemptBindings, Option, UnresolvedBinding
+from qabro.bindings import AttemptBindings, Option, Options, UnresolvedBinding
 from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
@@ -49,10 +49,12 @@ class RecipeStep:
     tool: str
     arguments: tuple[tuple[str, str | Parameter], ...]
 
-    def resolve(self, bindings: AttemptBindings) -> Action:
+    def resolve(
+        self, bindings: AttemptBindings, read_options: Callable[[str], Options] | None = None,
+    ) -> Action:
         arguments = {}
         for key, expression in self.arguments:
-            value = bindings.use(expression.name) if isinstance(expression, Parameter) else expression
+            value = bindings.resolve(expression.name, read_options) if isinstance(expression, Parameter) else expression
             arguments[key] = value.id if isinstance(value, Option) else value
         return Action(self.tool, arguments)
 
@@ -79,6 +81,7 @@ def run_scenario(
     applicable: Callable[[Recipe], bool] | None = None,
     bindings: AttemptBindings | None = None,
     max_actions: int | None = None,
+    read_options: Callable[[str], Options] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
@@ -134,7 +137,10 @@ def run_scenario(
                                 "id": recipe.id, "revision": recipe.revision,
                                 "steps": [item.id for item in covered],
                             })
-                action = planned[index].resolve(bindings) if index in planned and bindings is not None else resolve(step)
+                if index in planned and bindings is not None:
+                    action = planned[index].resolve(bindings, read_options)
+                else:
+                    action = resolve(step)
                 opened = saved.get(f"{action_id}:window", {}).get("opened_ns", monotonic_ns())
                 journal.append(attempt_id, f"{action_id}:window", "step_window", {
                     "opened_ns": opened,
