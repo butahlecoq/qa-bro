@@ -32,13 +32,15 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.load_hint("after", ref), candidate.hint)
 
     def test_queue_publishes_only_after_validation_and_keeps_existing_pin(self):
+        from datetime import UTC, datetime
         from time import monotonic_ns
 
         from qabro.artifacts import ArtifactStore
+        from qabro.bindings import AttemptBindings
         from qabro.browser import BrowserCalls
         from qabro.evidence import Evidence
         from qabro.journal import Journal
-        from qabro.runner import Action, run_scenario
+        from qabro.runner import Action, Recipe, RecipeStep, run_scenario
         from qabro.validation import revalidate_next_hint, validate_next_hint, validate_next_transfer
         from qabro.compatibility import propose_transfer
 
@@ -67,8 +69,12 @@ class ValidationTests(unittest.TestCase):
                     journal, attempt, "fixture", attempt,
                     lambda *_: {"content": [{"type": "text", "text": "ok"}]}, lambda value: value,
                 )
-                result = run_scenario(scenario, browser, lambda _: Action("click", {}),
-                                      lambda *_: Evidence(monotonic_ns(), artifact, True))
+                result = run_scenario(
+                    scenario, browser, lambda _: Action("click", {}),
+                    lambda *_: Evidence(monotonic_ns(), artifact, True),
+                    choose=lambda _: candidate.recipe, applicable=lambda _: True,
+                    bindings=AttemptBindings({}, seed=0, base_time=datetime.now(UTC)),
+                )
                 runs.append(ValidationRun(candidate.ref, candidate.scope, str(index), str(index),
                                           "fixed", "open", result, (("options", artifact),), attempt))
             return tuple(runs)
@@ -89,11 +95,15 @@ class ValidationTests(unittest.TestCase):
 
         def prepare(source, observed_scope):
             self.assertEqual((source, observed_scope), (ref, scope))
-            return HintCandidate(replacement, scope, draft["hint"], frozenset({"open"}), False)
+            step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
+            recipe = Recipe(replacement.id, replacement.revision, (RecipeStep(step, "click", ()),))
+            return HintCandidate(replacement, scope, draft["hint"], frozenset({"open"}), False,
+                                 frozenset({"click"}), recipe)
 
         self.assertTrue(revalidate_next_hint(catalog, prepare, validate, clock=lambda: 3))
         catalog.pin("after-revalidation")
-        self.assertEqual(catalog.search("after-revalidation", "category", scope, frozenset()), [replacement])
+        self.assertEqual(catalog.search("after-revalidation", "category", scope, frozenset({"click"})), [replacement])
+        self.assertIsNotNone(catalog.load_recipe("after-revalidation", replacement))
 
         target = Scope("fixture", "combobox", "orders", "editor")
         propose_transfer(catalog, catalog.jobs, "after-revalidation", replacement, target)
@@ -105,5 +115,5 @@ class ValidationTests(unittest.TestCase):
 
         self.assertTrue(validate_next_transfer(catalog, prepare_transfer, validate, clock=lambda: 4))
         catalog.pin("after-transfer")
-        self.assertEqual(catalog.search("after-transfer", "category", scope, frozenset()), [replacement])
+        self.assertEqual(catalog.search("after-transfer", "category", scope, frozenset({"click"})), [replacement])
         self.assertEqual(catalog.search("after-transfer", "category", target, frozenset()), [transferred])
