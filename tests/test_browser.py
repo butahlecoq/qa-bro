@@ -36,7 +36,23 @@ class BrowserTests(unittest.TestCase):
 
         reopened = Journal(journal.path)
         self.assertEqual(reopened.actions_to_reconcile("attempt"), [("save", start[3])])
+        self.assertFalse(reopened.release_tab("shared", "tab", "attempt"))
         reopened.append("attempt", "save:reconciled", "reconciliation", {
             "artifact_id": "fresh-snapshot", "effect": "completed",
         })
         self.assertEqual(reopened.actions_to_reconcile("attempt"), [])
+        self.assertTrue(reopened.release_tab("shared", "tab", "attempt"))
+
+    def test_active_action_keeps_tab_until_call_finishes(self):
+        directory = self.enterContext(TemporaryDirectory())
+        journal = Journal(Path(directory) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+
+        def transport(tab, tool, arguments):
+            self.assertFalse(journal.release_tab("shared", tab, "attempt"))
+            return {"content": [{"type": "text", "text": "ready"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        self.assertEqual(browser.invoke("read", "step-1", "snapshot", {}).outcome, Outcome.RETURNED)
+        self.assertTrue(journal.release_tab("shared", "tab", "attempt"))

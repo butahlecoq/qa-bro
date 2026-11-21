@@ -91,13 +91,17 @@ class Journal:
 
     def events(self, attempt: str) -> list[tuple[int, str, str, dict]]:
         with closing(self._connect()) as db:
-            rows = db.execute(
-                "SELECT sequence, event_id, kind, payload FROM events "
-                "WHERE attempt_id=? ORDER BY sequence",
-                (attempt,),
-            )
-            return [(sequence, event, kind, json.loads(payload))
-                    for sequence, event, kind, payload in rows]
+            return self._events(db, attempt)
+
+    @staticmethod
+    def _events(db: sqlite3.Connection, attempt: str) -> list[tuple[int, str, str, dict]]:
+        rows = db.execute(
+            "SELECT sequence, event_id, kind, payload FROM events "
+            "WHERE attempt_id=? ORDER BY sequence",
+            (attempt,),
+        )
+        return [(sequence, event, kind, json.loads(payload))
+                for sequence, event, kind, payload in rows]
 
     def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
@@ -113,6 +117,10 @@ class Journal:
 
     def release_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            for _, payload in self._actions_to_reconcile(self._events(db, attempt)):
+                if (payload.get("context"), payload.get("tab")) == (context, tab):
+                    return False
             return db.execute(
                 "DELETE FROM tab_leases WHERE context_id=? AND tab_id=? AND attempt_id=?",
                 (context, tab, attempt),
@@ -120,7 +128,13 @@ class Journal:
 
     def actions_to_reconcile(self, attempt: str) -> list[tuple[str, dict]]:
         """Return started actions without a known tool outcome or reconciliation."""
-        events = {event: (kind, payload) for _, event, kind, payload in self.events(attempt)}
+        return self._actions_to_reconcile(self.events(attempt))
+
+    @staticmethod
+    def _actions_to_reconcile(
+        entries: list[tuple[int, str, str, dict]],
+    ) -> list[tuple[str, dict]]:
+        events = {event: (kind, payload) for _, event, kind, payload in entries}
         actions = []
         for event, (kind, payload) in events.items():
             if kind != "tool_start":
