@@ -113,6 +113,30 @@ def revalidate_next_hint(
     return _validate_job(catalog, job, candidate, validate, clock)
 
 
+def validate_next_transfer(
+    catalog: Catalog,
+    prepare: Callable[[SkillRef, Scope, Scope], HintCandidate | None],
+    validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],
+    *,
+    clock: Callable[[], int] = time_ns,
+) -> bool:
+    """Validate a target scope while retaining the original skill's availability."""
+    queue = catalog.jobs
+    job = queue.claim("validate_transfer", now_ns=clock(), lease_ns=300_000_000_000)
+    if job is None:
+        return False
+    source = SkillRef(**job.payload["skill"])
+    source_scope = Scope(**job.payload["source"])
+    target = Scope(**job.payload["target"])
+    candidate = prepare(source, source_scope, target)
+    if candidate is None:
+        return queue.complete(job, {"published": False}, now_ns=clock())
+    # Each scope has its own active pointer, so publish under a distinct ID.
+    if candidate.scope != target or candidate.ref.id == source.id:
+        raise ValueError("Transfer requires a distinct skill ID in the target scope")
+    return _validate_job(catalog, job, candidate, validate, clock)
+
+
 def _validate_job(
     catalog: Catalog, job: Job, candidate: HintCandidate,
     validate: Callable[[HintCandidate], tuple[ValidationRun, ...]],

@@ -39,7 +39,8 @@ class ValidationTests(unittest.TestCase):
         from qabro.evidence import Evidence
         from qabro.journal import Journal
         from qabro.runner import Action, run_scenario
-        from qabro.validation import revalidate_next_hint, validate_next_hint
+        from qabro.validation import revalidate_next_hint, validate_next_hint, validate_next_transfer
+        from qabro.compatibility import propose_transfer
 
         path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
         catalog = Catalog(path)
@@ -59,7 +60,7 @@ class ValidationTests(unittest.TestCase):
             journal = Journal(path)
             runs = []
             for index, artifact in enumerate(artifacts):
-                attempt = f"validation-{candidate.ref.revision}-{index}"
+                attempt = f"validation-{candidate.ref.id}-{candidate.ref.revision}-{index}"
                 journal.start(attempt, attempt, "validator")
                 journal.claim_tab("fixture", attempt, attempt)
                 browser = BrowserCalls(
@@ -68,7 +69,7 @@ class ValidationTests(unittest.TestCase):
                 )
                 result = run_scenario(scenario, browser, lambda _: Action("click", {}),
                                       lambda *_: Evidence(monotonic_ns(), artifact, True))
-                runs.append(ValidationRun(candidate.ref, scope, str(index), str(index),
+                runs.append(ValidationRun(candidate.ref, candidate.scope, str(index), str(index),
                                           "fixed", "open", result, (("options", artifact),), attempt))
             return tuple(runs)
 
@@ -93,3 +94,16 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(revalidate_next_hint(catalog, prepare, validate, clock=lambda: 3))
         catalog.pin("after-revalidation")
         self.assertEqual(catalog.search("after-revalidation", "category", scope, frozenset()), [replacement])
+
+        target = Scope("fixture", "combobox", "orders", "editor")
+        propose_transfer(catalog, catalog.jobs, "after-revalidation", replacement, target)
+        transferred = SkillRef("orders-category", "1", replacement.summary)
+
+        def prepare_transfer(source, observed_scope, target_scope):
+            self.assertEqual((source, observed_scope, target_scope), (replacement, scope, target))
+            return HintCandidate(transferred, target, draft["hint"], frozenset({"open"}), False)
+
+        self.assertTrue(validate_next_transfer(catalog, prepare_transfer, validate, clock=lambda: 4))
+        catalog.pin("after-transfer")
+        self.assertEqual(catalog.search("after-transfer", "category", scope, frozenset()), [replacement])
+        self.assertEqual(catalog.search("after-transfer", "category", target, frozenset()), [transferred])
