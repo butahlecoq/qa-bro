@@ -109,6 +109,12 @@ Attach `record_verified_steps` to the scenario runner with an operation label fo
 
 Use `synthesize_next_hint` with the worker's configured text model callback. It reads the source artifacts, filters known run values and snapshot references, and asks for a hint with an excerpt from a recorded observation. The explorer records the token and browser costs against the job. A draft enters the validation queue with its source evidence and becomes discoverable only after independent validation.
 
+### Replay a recipe
+
+A recipe maps each browser action to its original scenario step. Replay resolves bindings and registered observations at runtime, applies typed checks, and records each dispatched action through the ordinary browser dispatcher. Nested recipes use pinned revisions. Repeated observations have both an iteration limit and a deadline. Scenario assertions remain in their original positions.
+
+Use `report_run` with the journal and run ID to inspect replay progress. The report shows the stopping point, recorded arguments, evidence references, and whether effects are complete, partial, absent, or unknown. A command that returned and a scenario assertion that matched are recorded independently.
+
 ### Validate a recipe before publication
 
 For each independent validation attempt, record the installed browse tool list as a `browse:schema` journal event using `snapshot_schema`. Keep the action and checkpoint evidence in the same database as the catalog. Validation requires three fresh attempts and at least two datasets when the source permits variation.
