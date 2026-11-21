@@ -225,10 +225,13 @@ def run_scenario(
                                 "steps": [item.id for item in covered],
                                 "branch_steps": [offset for offset, item in enumerate(expanded)
                                                  if item.branch is not None],
+                                "guard_steps": {str(offset): item.guard for offset, item in enumerate(expanded)
+                                                if item.guard is not None},
                             })
                 if index in planned and bindings is not None:
                     item = planned[index]
                     guard_passed = True
+                    guard_event = None
                     if item.guard is not None:
                         started = monotonic_ns()
                         proof = check_recipe_guard(step, item.guard) if check_recipe_guard else None
@@ -236,7 +239,8 @@ def run_scenario(
                             proof is not None and started <= proof.observed_ns <= monotonic_ns()
                             and proof.matches is True
                         )
-                        journal.append(attempt_id, f"{action_id}:guard:{uuid4().hex}", "recipe_guard", {
+                        guard_event = f"{action_id}:guard:{uuid4().hex}"
+                        journal.append(attempt_id, guard_event, "recipe_guard", {
                             "step": step.id, "probe": item.guard, "passed": guard_passed,
                             "artifact_id": proof.artifact_id if proof else None,
                         })
@@ -260,6 +264,7 @@ def run_scenario(
                         action = item.resolve(bindings, read_options, branch_value=branch_value)
                         journal.append(attempt_id, f"{action_id}:recipe", "recipe_action", {
                             "step": step.id, "action": action_id,
+                            **({"guard_event": guard_event} if guard_event else {}),
                         })
                 else:
                     action = resolve(step)

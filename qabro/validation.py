@@ -146,16 +146,26 @@ def validate_next_transfer(
     return _validate_job(catalog, job, candidate, validate, clock)
 
 
-def _recipe_steps_observed(selection: str, payload: dict, entries: dict) -> bool:
+def _recipe_step_evidence(selection: str, payload: dict, entries: dict) -> set[str] | None:
     index = int(selection.removeprefix("recipe:"))
+    references = set()
     for offset, step in enumerate(payload["steps"]):
         action_id = f"step-{index + offset}"
-        recorded = entries.get(f"{action_id}:recipe")
-        if recorded != {"step": step, "action": action_id}:
-            return False
+        recorded = entries.get(f"{action_id}:recipe", {})
+        if recorded.get("step") != step or recorded.get("action") != action_id:
+            return None
         if entries.get(f"{action_id}:finish", {}).get("outcome") != "returned":
-            return False
-    return bool(payload["steps"])
+            return None
+        probe = payload.get("guard_steps", {}).get(str(offset))
+        if probe is not None:
+            guard = entries.get(recorded.get("guard_event"), {})
+            reference = guard.get("artifact_id")
+            if (guard.get("step"), guard.get("probe"), guard.get("passed")) != (step, probe, True):
+                return None
+            if not isinstance(reference, str) or not reference:
+                return None
+            references.add(reference)
+    return references if payload["steps"] else None
 
 
 def _recipe_branch_outcomes(selection: str, payload: dict, entries: dict) -> dict[int, bool | None]:
@@ -188,11 +198,15 @@ def _validate_job(
                 if kind == "recipe_selected"
                 and (payload["id"], payload["revision"]) == (candidate.ref.id, candidate.ref.revision)
                 and payload.get("fingerprint") == candidate.recipe.fingerprint
-                and _recipe_steps_observed(event, payload, entries)
             ]
             if not selections:
                 accepted = False
             for event, payload in selections:
+                step_evidence = _recipe_step_evidence(event, payload, entries)
+                if step_evidence is None:
+                    accepted = False
+                else:
+                    references.update(step_evidence)
                 for offset, outcome in _recipe_branch_outcomes(event, payload, entries).items():
                     branches.setdefault(offset, set()).add(outcome)
         if entries.get("scenario:start", {}).get("contract_revision") != run.result.scenario.revision:

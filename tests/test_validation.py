@@ -53,12 +53,16 @@ class ValidationTests(unittest.TestCase):
             "variants": ["open"], "variable_inputs": False,
         }
         step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
-        draft["recipe"] = encode_recipe(Recipe("draft", "1", (RecipeStep(step, "click", ()),)))
+        draft["recipe"] = encode_recipe(Recipe("draft", "1", (
+            RecipeStep(step, "click", (), guard="field-visible"),
+        )))
         draft["capabilities"] = ["click"]
         catalog.jobs.enqueue("example", "validate_hint", draft)
         catalog.pin("before")
         store = ArtifactStore(path)
         artifacts = [store.put(f"snapshot {index}".encode(), now=1) for index in range(3)]
+
+        guard_artifact = store.put(b"Verified visible field", now=1)
 
         def validate(candidate, branch_probe=None):
             step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
@@ -79,6 +83,7 @@ class ValidationTests(unittest.TestCase):
                     choose=lambda _: candidate.recipe, applicable=lambda _: True,
                     bindings=AttemptBindings({}, seed=0, base_time=datetime.now(UTC)),
                     probe_branch=branch_probe,
+                    check_recipe_guard=lambda *_: Evidence(monotonic_ns(), guard_artifact, True),
                 )
                 runs.append(ValidationRun(candidate.ref, candidate.scope, str(index), str(index),
                                           "fixed", "open", result, (("options", artifact),), attempt))
@@ -93,6 +98,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.load_hint("after", ref), draft["hint"])
         store.prune(before=99, max_bytes=0)
         self.assertTrue(all(store.get(artifact) for artifact in artifacts))
+        self.assertEqual(store.get(guard_artifact), b"Verified visible field")
 
         self.assertEqual(catalog.quarantine_scope(scope, "Changed category widget"), [ref])
         catalog.pin("during-quarantine")
