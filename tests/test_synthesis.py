@@ -12,7 +12,7 @@ class SynthesisTests(unittest.TestCase):
         def ask(prompt):
             self.assertIn("Select category", prompt)
             self.assertIn("options appeared", prompt)
-            return '{"summary":"Category","hint":"Open the field","variants":["open"]}', 42
+            return '{"summary":"Category","hint":"Open the field","variants":["open"],"support":"options appeared"}', 42
 
         result = synthesize_hint(job, (b"options appeared",), ask)
         self.assertEqual(result.hint, "Open the field")
@@ -28,10 +28,22 @@ class SynthesisTests(unittest.TestCase):
             self.assertNotIn("Private fixture input", prompt)
             self.assertNotIn("ref=e42", prompt)
             self.assertIn("Category", prompt)
-            return '{"summary":"Category","hint":"Click @e42","variants":["open"]}', 13
+            return '{"summary":"Category","hint":"Click @e42","variants":["open"],"support":"Category"}', 13
 
         result = synthesize_hint(
             job, (b'Category [ref=e42] "Private fixture input"',), ask,
             run_values=("Private fixture input",),
         )
         self.assertEqual(result, NoCandidate(13))
+
+    def test_declines_candidate_with_invented_support(self):
+        job = Job("job", "explore", {"operation": "Select category"}, "lease")
+        result = synthesize_hint(
+            job, (b"options appeared",),
+            lambda _: (
+                '{"summary":"Category","hint":"Wait for search",'
+                '"variants":["open"],"support":"search started"}',
+                14,
+            ),
+        )
+        self.assertEqual(result, NoCandidate(14))
