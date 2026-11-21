@@ -25,3 +25,18 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(store.prune(before=10, max_bytes=0), 3)
         store.unpin("skill:2")
         self.assertEqual(store.prune(before=10, max_bytes=0), 0)
+
+    def test_retention_preserves_evidence_in_an_incomplete_attempt(self):
+        from qabro.journal import Journal
+        from qabro.retention import prune_database
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, store = Journal(path), ArtifactStore(path)
+        journal.start("attempt", "run", "worker")
+        proof = store.put(b"recovery evidence", now=1)
+        journal.append("attempt", "probe:finish", "tool_finish", {"artifact_id": proof})
+        unused = store.put(b"unused", now=1)
+        result = prune_database(path, before_ns=2, journal_bytes=0, artifact_bytes=0)
+        self.assertFalse(result["within_limits"])
+        self.assertEqual(store.get(proof), b"recovery evidence")
+        self.assertIsNone(store.get(unused))

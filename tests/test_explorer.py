@@ -191,4 +191,8 @@ class ExplorerTests(unittest.TestCase):
 
         self.assertTrue(explore_recorded(catalog, synthesize, clock=lambda: 1))
         scan_experience(journal, catalog.jobs)
+        self.assertEqual(store.prune(before=100, max_bytes=0), 2)
+        for attempt in ("a", "b"):
+            journal.append(attempt, "scenario:finish", "scenario_finish", {"verdict": "PASS"})
+        self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
         self.assertEqual(store.prune(before=100, max_bytes=0), 0)

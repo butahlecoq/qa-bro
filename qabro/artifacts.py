@@ -54,16 +54,21 @@ class ArtifactStore:
             raise ValueError("Artifact size limit must be nonnegative")
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute("""
-                DELETE FROM artifacts WHERE used_at<? AND
-                NOT EXISTS (SELECT 1 FROM artifact_pins WHERE artifact_id=artifacts.id)
-            """, (before,))
+            protected = "SELECT artifact_id FROM artifact_pins"
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='events' AND type='table'").fetchone():
+                protected += """
+                    UNION SELECT json_extract(payload, '$.artifact_id') FROM events
+                    UNION SELECT json_extract(payload, '$.evidence_id') FROM events
+                """
+            db.execute(f"CREATE TEMP TABLE retained_artifacts AS {protected}")
+            db.execute("CREATE INDEX retained_artifact_id ON retained_artifacts(artifact_id)")
+            removable = "NOT EXISTS (SELECT 1 FROM retained_artifacts WHERE artifact_id=artifacts.id)"
+            db.execute(f"DELETE FROM artifacts WHERE used_at<? AND {removable}", (before,))
             total = db.execute("SELECT COALESCE(SUM(length(content)), 0) FROM artifacts").fetchone()[0]
             if total <= max_bytes:
                 return total
-            rows = db.execute("""
-                SELECT id, length(content) FROM artifacts
-                WHERE NOT EXISTS (SELECT 1 FROM artifact_pins WHERE artifact_id=artifacts.id)
+            rows = db.execute(f"""
+                SELECT id, length(content) FROM artifacts WHERE {removable}
                 ORDER BY used_at, id
             """).fetchall()
             for artifact_id, size in rows:
