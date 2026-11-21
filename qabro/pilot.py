@@ -179,3 +179,46 @@ def release_report(
         "ready": includes_controlled_defects and saved >= minimum_tokens_saved
         and not (new_false_passes or missing_checks or duplicate_effects),
     }
+
+
+@dataclass(frozen=True)
+class OnlineAttempt:
+    attempt_id: str
+    trial: Trial
+    available_revisions: tuple[tuple[str, str], ...]
+    learning_since_previous: LearningCost
+
+
+def online_learning_report(
+    attempts: list[OnlineAttempt], *, final_learning: LearningCost = LearningCost(),
+) -> dict:
+    """Report online results in execution order, including work after the last attempt."""
+    rows = []
+    seen = set()
+    explorer_tokens = validation_tokens = worker_tokens = 0
+    for attempt in attempts:
+        if attempt.attempt_id in seen:
+            raise ValueError(f"Duplicate online attempt: {attempt.attempt_id}")
+        seen.add(attempt.attempt_id)
+        explorer_tokens += attempt.learning_since_previous.explorer_tokens
+        validation_tokens += attempt.learning_since_previous.validation_tokens
+        worker_tokens += attempt.trial.worker_tokens
+        rows.append({
+            "attempt_id": attempt.attempt_id,
+            "case_id": attempt.trial.case.id,
+            "available_revisions": [list(ref) for ref in attempt.available_revisions],
+            "verdict": attempt.trial.verdict,
+            "expected": attempt.trial.case.expected,
+            "elapsed_ns": attempt.trial.elapsed_ns,
+            "cumulative_tokens": worker_tokens + explorer_tokens + validation_tokens,
+        })
+
+    explorer_tokens += final_learning.explorer_tokens
+    validation_tokens += final_learning.validation_tokens
+    return {
+        "attempts": rows,
+        "worker_tokens": worker_tokens,
+        "explorer_tokens": explorer_tokens,
+        "validation_tokens": validation_tokens,
+        "total_tokens": worker_tokens + explorer_tokens + validation_tokens,
+    }

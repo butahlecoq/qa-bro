@@ -62,3 +62,19 @@ class PilotTests(unittest.TestCase):
         report = release_report(trials, *args, evidence, minimum_tokens_saved=20)
         self.assertEqual(report["new_false_pass_cases"], ["defective"])
         self.assertFalse(report["ready"])
+
+    def test_online_report_records_catalog_changes_and_final_learning_cost(self):
+        from qabro.pilot import OnlineAttempt, online_learning_report
+
+        case = Case("clean", "create", Verdict.PASS)
+        trial = Trial(case, Mode.HYBRID, "same", Verdict.PASS, 12, 100)
+        first = OnlineAttempt("a", trial, (), LearningCost(8, 2))
+        second = OnlineAttempt("b", trial, (("choose-category", "1"),), LearningCost(3, 7))
+        report = online_learning_report([first, second], final_learning=LearningCost(1, 4))
+        self.assertEqual([row["available_revisions"] for row in report["attempts"]], [
+            [], [["choose-category", "1"]],
+        ])
+        self.assertEqual([row["cumulative_tokens"] for row in report["attempts"]], [110, 220])
+        self.assertEqual(report["total_tokens"], 225)
+        with self.assertRaises(ValueError):
+            online_learning_report([first, first])
