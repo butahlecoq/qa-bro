@@ -139,8 +139,8 @@ def explore_next(
         raise ValueError("A candidate requires a summary, hint and claimed variants")
     if min(draft.model_tokens, draft.browser_ns) < 0:
         raise ValueError("Explorer usage must be nonnegative")
-    if catalog is not None and draft.recipe is None and catalog.has_active_hint(
-        Scope(**job.payload["scope"]), draft.hint, draft.capabilities,
+    if catalog is not None and catalog.has_active_hint(
+        Scope(**job.payload["scope"]), draft.hint, draft.capabilities, draft.recipe,
     ):
         return queue.complete(job, {
             "status": "already_published", "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns,

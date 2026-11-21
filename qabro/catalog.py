@@ -308,15 +308,21 @@ class Catalog:
             return decode_recipe(row[0]) if row else None
 
 
-    def has_active_hint(self, scope: Scope, hint: str, capabilities: frozenset[str]) -> bool:
+    def has_active_hint(
+        self, scope: Scope, hint: str, capabilities: frozenset[str], recipe: Recipe | None = None,
+    ) -> bool:
+        recipe_body = encode_recipe(recipe) if recipe is not None else None
         with closing(sqlite3.connect(self.path)) as db:
             return db.execute(
                 """
                 SELECT 1 FROM active_skills a JOIN skill_revisions r ON r.row_id=a.row_id
+                LEFT JOIN skill_recipes recipe ON recipe.row_id=r.row_id
                 WHERE r.platform=? AND r.component=? AND r.context=? AND r.role=?
                   AND r.hint=? AND r.capabilities=?
+                  AND json_remove(recipe.body, '$.id', '$.revision')
+                      IS json_remove(?, '$.id', '$.revision')
                 LIMIT 1
                 """,
                 (scope.platform, scope.component, scope.context, scope.role,
-                 hint, json.dumps(sorted(capabilities))),
+                 hint, json.dumps(sorted(capabilities)), recipe_body),
             ).fetchone() is not None

@@ -141,3 +141,26 @@ class CatalogTests(unittest.TestCase):
         catalog.pin("after-quarantine")
         self.assertIsNone(catalog.load_recipe("after-quarantine", parent))
         self.assertIsNotNone(catalog.load_recipe("before-quarantine", parent))
+
+    def test_recipe_deduplication_preserves_steps_and_package_type(self):
+        from dataclasses import replace
+
+        from qabro.contract import Step
+        from qabro.runner import Parameter, Recipe, RecipeStep
+
+        catalog = Catalog(Path(self.enterContext(TemporaryDirectory())) / "catalog.sqlite")
+        scope = Scope("fixture", "field", "requirements", "editor")
+        hint = "Fill the named field."
+        tools = frozenset({"fill"})
+        ref = SkillRef("published", "2", "Fill field")
+        step = RecipeStep(Step("fill", "Fill field"), "fill", (
+            ("selector", "#name"), ("value", Parameter("name")),
+        ))
+        recipe = Recipe(ref.id, ref.revision, (step,))
+        catalog.seed_verified_hint(ref, scope, hint, capabilities=tools, recipe=recipe)
+
+        draft = replace(recipe, id="draft", revision="1")
+        self.assertTrue(catalog.has_active_hint(scope, hint, tools, draft))
+        self.assertFalse(catalog.has_active_hint(scope, hint, tools))
+        changed = replace(draft, steps=(replace(step, guard="field-visible"),))
+        self.assertFalse(catalog.has_active_hint(scope, hint, tools, changed))
