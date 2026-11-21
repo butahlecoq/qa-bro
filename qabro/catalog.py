@@ -110,6 +110,33 @@ class Catalog:
                 (row_id,),
             )
 
+    def quarantine_scope(self, scope: Scope, reason: str) -> list[SkillRef]:
+        """Invalidate all known revisions in a changed component context."""
+        if not reason.strip():
+            raise ValueError("Quarantine requires a reason")
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                """
+                SELECT r.row_id, r.id, r.revision, r.summary
+                FROM skill_revisions r
+                LEFT JOIN quarantined_skills q ON q.row_id=r.row_id
+                WHERE r.platform=? AND r.component=? AND r.context=? AND r.role=?
+                  AND q.row_id IS NULL
+                ORDER BY r.row_id
+                """,
+                (scope.platform, scope.component, scope.context, scope.role),
+            ).fetchall()
+            db.executemany(
+                "INSERT INTO quarantined_skills VALUES (?, ?)",
+                ((row_id, reason) for row_id, *_ in rows),
+            )
+            db.executemany(
+                "DELETE FROM active_skills WHERE row_id=?",
+                ((row_id,) for row_id, *_ in rows),
+            )
+            return [SkillRef(skill_id, revision, summary) for _, skill_id, revision, summary in rows]
+
     def pin(self, run: str) -> None:
         with closing(sqlite3.connect(self.path)) as db, db:
             if db.execute("INSERT OR IGNORE INTO catalog_runs VALUES (?)", (run,)).rowcount:
