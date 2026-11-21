@@ -145,6 +145,7 @@ def run_scenario(
     read_options: Callable[[str], Options] | None = None,
     probe_branch: Callable[[Step, str, int], bool | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
+    allow_retry: Callable[[Step, Action], bool] | None = None,
     resume: bool = False,
     verify_resume: Callable[[BrowserCalls], Evidence] | None = None,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
@@ -202,7 +203,9 @@ def run_scenario(
             action_id = f"step-{index}"
             replayed = f"{action_id}:start" in saved
             if replayed:
-                opened = saved[f"{action_id}:window"]["opened_ns"]
+                if f"{action_id}:retry:start" in saved:
+                    action_id += ":retry"
+                opened = saved[f"step-{index}:window"]["opened_ns"]
                 succeeded = (
                     saved.get(f"{action_id}:finish", {}).get("outcome") == Outcome.RETURNED
                 )
@@ -260,6 +263,19 @@ def run_scenario(
                 if recover is not None and action_id in dict(journal.actions_to_reconcile(attempt_id)):
                     recover(action_id, step)
                 effect = confirmed_effect(browser, action_id)
+                if (
+                    effect is Effect.ABSENT and not replayed and allow_retry is not None
+                    and all(check.wait_ns > 0 and monotonic_ns() < opened + check.wait_ns
+                            for check in step.checkpoints)
+                    and allow_retry(step, action)
+                ):
+                    retry_id = f"{action_id}:retry"
+                    try:
+                        retried = browser.invoke(retry_id, step.id, action.tool, action.arguments)
+                    except TimeoutError:
+                        retried = None
+                    action_id = retry_id
+                    effect = Effect.COMPLETED if retried and retried.outcome is Outcome.RETURNED else Effect.UNKNOWN
                 if effect is not Effect.COMPLETED:
                     kind = "effect_absent" if effect is Effect.ABSENT else "unresolved_effect"
                     journal.append(attempt_id, f"{action_id}:{effect}", kind, {

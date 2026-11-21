@@ -194,3 +194,32 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(journal.events("attempt")[-1][3], {
             "context": "shared", "tab": "tab", "artifact_id": "changed-document", "verified": False,
         })
+
+    def test_local_retry_reuses_original_action_after_verified_absence(self):
+        from qabro.contract import Scenario, Step, Verdict
+        from qabro.runner import Action, run_scenario
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append((tool, arguments))
+            if len(calls) == 1:
+                raise TimeoutError()
+            return {"content": [{"type": "text", "text": "returned"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        scenario = Scenario("Submit", (Step("save", "Submit"),))
+        action = Action("submit", {"name": "original"})
+
+        def recover(action_id, step):
+            reconcile(browser, action_id, "probe", "snapshot", {}, lambda _: Effect.ABSENT)
+
+        result = run_scenario(scenario, browser, lambda _: action, lambda *_: None,
+                              recover=recover, allow_retry=lambda _, resolved: resolved == action)
+        self.assertEqual(result.verdict, Verdict.PASS)
+        self.assertEqual(calls, [("submit", action.arguments), ("snapshot", {}), ("submit", action.arguments)])
+        self.assertEqual(journal.actions_to_reconcile("attempt"), [])
