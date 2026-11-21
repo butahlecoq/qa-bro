@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from multiprocessing import get_context
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import urlsplit
@@ -13,6 +14,19 @@ from qabro.contract import Scenario, Step, Verdict
 from qabro.journal import Journal
 from qabro.recovery import Effect, reconcile
 from qabro.runner import Action, run_scenario
+
+
+def submit_and_exit(executable, path, tab, scenario, actions):
+    journal = Journal(path)
+    with BrowseTransport(executable) as live:
+        def lose_submit_response(tab_id, tool, arguments):
+            result = live(tab_id, tool, arguments)
+            if tool == "click" and not result.get("isError"):
+                os._exit(17)
+            return result
+
+        browser = BrowserCalls(journal, tab, "fixture", tab, lose_submit_response, lambda value: value)
+        run_scenario(scenario, browser, lambda step: actions[step.id], lambda *_: None)
 
 
 @unittest.skipUnless(os.environ.get("QABRO_FIXTURE_URL"), "Set QABRO_FIXTURE_URL for the live browser test")
@@ -56,16 +70,18 @@ class LiveRecoveryTests(unittest.TestCase):
             })
             self.assertFalse(opened.get("isError"))
 
-            def lose_submit_response(tab_id, tool, arguments):
-                result = live(tab_id, tool, arguments)
-                if tool == "click":
-                    self.assertFalse(result.get("isError"))
-                    raise KeyboardInterrupt("Injected interruption after browser submission")
-                return result
-
-            browser = BrowserCalls(journal, tab, "fixture", tab, lose_submit_response, lambda value: value)
-            with self.assertRaises(KeyboardInterrupt):
-                run_scenario(scenario, browser, resolve, lambda *_: None)
+        process = get_context("spawn").Process(
+            target=submit_and_exit, args=(executable, path, tab, scenario, actions),
+        )
+        process.start()
+        try:
+            process.join(timeout=30)
+            self.assertEqual(process.exitcode, 17)
+        finally:
+            if process.is_alive():
+                process.kill()
+                process.join()
+            process.close()
 
         journal = Journal(path)
         self.assertEqual([action for action, _ in journal.actions_to_reconcile(tab)], ["step-3"])
