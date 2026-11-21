@@ -6,6 +6,10 @@ from contextlib import closing
 from pathlib import Path
 
 
+class DuplicateEvent(Exception):
+    """A caller attempted to reserve an event twice."""
+
+
 class Journal:
     def __init__(self, path: Path):
         self.path = path
@@ -51,7 +55,7 @@ class Journal:
             if owner != (run, worker):
                 raise ValueError("Attempt already belongs to a different run or worker")
 
-    def append(self, attempt: str, event: str, kind: str, payload: dict) -> int:
+    def append(self, attempt: str, event: str, kind: str, payload: dict, *, reserve: bool = False) -> int:
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -63,6 +67,8 @@ class Journal:
                 sequence, old_kind, old_payload = existing
                 if (old_kind, old_payload) != (kind, encoded):
                     raise ValueError("Event ID already records different evidence")
+                if reserve:
+                    raise DuplicateEvent(event)
                 return sequence
             return db.execute(
                 """
