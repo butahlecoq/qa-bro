@@ -137,7 +137,7 @@ class Journal:
         events = {event: (kind, payload) for _, event, kind, payload in entries}
         actions = []
         for event, (kind, payload) in events.items():
-            if kind != "tool_start":
+            if kind != "tool_start" or payload.get("read_only", False):
                 continue
             action = event.removesuffix(":start")
             if f"{action}:reconciled" in events:

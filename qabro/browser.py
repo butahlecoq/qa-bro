@@ -59,12 +59,14 @@ class BrowserCalls:
         self.redact = redact
         self.budget = budget
 
-    def invoke(self, action: str, step: str, tool: str, arguments: dict) -> ToolResult:
+    def invoke(
+        self, action: str, step: str, tool: str, arguments: dict, *, read_only: bool = False,
+    ) -> ToolResult:
         if self.budget is not None:
             self.budget.consume("browser")
         self.journal.append(
             self.attempt, f"{action}:start", "tool_start",
-            {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments)},
+            {"step": step, "context": self.context, "tab": self.tab, "tool": tool, "arguments": self.redact(arguments), "read_only": read_only},
             reserve=True, tab=(self.context, self.tab),
         )
         started = monotonic_ns()
