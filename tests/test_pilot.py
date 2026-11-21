@@ -100,8 +100,16 @@ class PilotTests(unittest.TestCase):
         ]
         directory = Path(self.enterContext(TemporaryDirectory()))
         manifest = directory / "pilot.json"
+        transfer_case = Case("transfer-defect", "transfer-create", Verdict.FAIL)
+        transfer_trials = [
+            replace(trial, case=transfer_case, verdict=Verdict.PASS if trial.mode is Mode.HYBRID else Verdict.FAIL)
+            for trial in trials
+        ]
         manifest.write_text(json.dumps({
-            "kind": "frozen", "trials": [asdict(trial) for trial in trials],
+            "kind": "frozen", "platform": "fixture-a", "trials": [asdict(trial) for trial in trials],
+            "transfer": {
+                "platform": "fixture-b", "trials": [asdict(trial) for trial in transfer_trials], "learning": {},
+            },
             "training_workflows": ["edit"], "learning": {},
             "skills": {"create:1": {
                 "uses": [{"case_id": "defect", "mode": "recipes"}],
@@ -123,5 +131,8 @@ class PilotTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual(report["modes"]["hybrid"]["detected_defects"], 1)
         self.assertFalse(report["release"]["ready"])
+        self.assertEqual(report["transfer"]["target_platform"], "fixture-b")
+        self.assertEqual(report["transfer"]["modes"]["hybrid"]["false_pass"], 1)
+        self.assertEqual(report["modes"]["hybrid"]["false_pass"], 0)
         self.assertEqual(report["skill_break_even"]["create:1"]["first_positive_use"], 1)
         self.assertEqual(report["skill_break_even"]["create:1"]["net_saved_tokens"], 4)

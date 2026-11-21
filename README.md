@@ -148,4 +148,6 @@ To report skill break-even, add a `skills` object keyed by skill ID and revision
 
 An online export has `kind: "online"` and ordered `attempts`. Each entry includes `attempt_id`, `trial`, `available_revisions` as skill ID and revision pairs, and `learning_since_previous`. Set `final_learning` for costs incurred after the final attempt. Keep the online and frozen exports separate.
 
+For a second-platform comparison, include `platform` in the frozen export and a `transfer` object with the distinct target `platform`, its matched `trials` and its `learning` costs. The report shows the target results independently of the source platform's release criteria.
+
 Only use corporate Pi runs when reporting release or transfer results for corporate platforms. The local browser fixture verifies the reporting and evidence pipeline.

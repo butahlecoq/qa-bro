@@ -302,6 +302,19 @@ def report_manifest(data: dict) -> dict:
     training = frozenset(data["training_workflows"])
     learning = {Mode(mode): _read_cost(row) for mode, row in data["learning"].items()}
     report = {"modes": frozen_catalog_report(trials, training, learning)}
+    if "transfer" in data:
+        target = data["transfer"]
+        source_id, target_id = data["platform"], target["platform"]
+        if not all(isinstance(platform, str) and platform.strip() for platform in (source_id, target_id)):
+            raise ValueError("Transfer reporting requires named source and target platforms")
+        if source_id == target_id:
+            raise ValueError("Transfer reporting requires a different target platform")
+        target_trials = [_read_trial(row) for row in target["trials"]]
+        target_learning = {Mode(mode): _read_cost(row) for mode, row in target["learning"].items()}
+        report["transfer"] = {
+            "source_platform": source_id, "target_platform": target_id,
+            "modes": frozen_catalog_report(target_trials, training, target_learning),
+        }
     if "skills" in data:
         by_case_mode = {(trial.case.id, trial.mode): trial for trial in trials}
         skills = {}
