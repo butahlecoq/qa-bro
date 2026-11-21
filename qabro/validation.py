@@ -1,7 +1,7 @@
 """Apply validation evidence requirements before publishing a skill hint."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from sqlite3 import Connection
 from time import time_ns
 
@@ -10,6 +10,7 @@ from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.contract import Attempt, Observation, Verdict
 from qabro.jobs import Job
 from qabro.journal import Journal
+from qabro.recipe_format import decode_recipe
 from qabro.runner import Recipe
 
 
@@ -89,9 +90,13 @@ def validate_next_hint(
     if job is None:
         return False
     draft = job.payload
+    ref = SkillRef(f"hint:{job.id}", "1", draft["summary"])
+    recipe = decode_recipe(draft["recipe"]) if "recipe" in draft else None
+    if recipe is not None:
+        recipe = replace(recipe, id=ref.id, revision=ref.revision)
     candidate = HintCandidate(
-        SkillRef(f"hint:{job.id}", "1", draft["summary"]), Scope(**draft["scope"]),
-        draft["hint"], frozenset(draft["variants"]), draft["variable_inputs"],
+        ref, Scope(**draft["scope"]), draft["hint"], frozenset(draft["variants"]),
+        draft["variable_inputs"], frozenset(draft.get("capabilities", ())), recipe,
     )
     return _validate_job(catalog, job, candidate, validate, clock)
 

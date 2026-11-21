@@ -43,6 +43,7 @@ class ValidationTests(unittest.TestCase):
         from qabro.runner import Action, Recipe, RecipeStep, run_scenario
         from qabro.validation import revalidate_next_hint, validate_next_hint, validate_next_transfer
         from qabro.compatibility import propose_transfer
+        from qabro.recipe_format import encode_recipe
 
         path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
         catalog = Catalog(path)
@@ -51,6 +52,9 @@ class ValidationTests(unittest.TestCase):
             "scope": vars(scope), "summary": "Find a category", "hint": "Open the field.",
             "variants": ["open"], "variable_inputs": False,
         }
+        step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
+        draft["recipe"] = encode_recipe(Recipe("draft", "1", (RecipeStep(step, "click", ()),)))
+        draft["capabilities"] = ["click"]
         catalog.jobs.enqueue("example", "validate_hint", draft)
         catalog.pin("before")
         store = ArtifactStore(path)
@@ -83,7 +87,8 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(validate_next_hint(catalog, validate, clock=lambda: 2))
         catalog.pin("after")
         self.assertEqual(catalog.search("before", "category", scope, frozenset()), [])
-        ref, = catalog.search("after", "category", scope, frozenset())
+        ref, = catalog.search("after", "category", scope, frozenset({"click"}))
+        self.assertEqual(catalog.load_recipe("after", ref).id, ref.id)
         self.assertEqual(catalog.load_hint("after", ref), draft["hint"])
         store.prune(before=99, max_bytes=0)
         self.assertTrue(all(store.get(artifact) for artifact in artifacts))
