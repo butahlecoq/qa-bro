@@ -155,6 +155,15 @@ class Journal:
                 raise RuntimeError("Cannot release resources while browser effects are unresolved")
             db.execute("DELETE FROM resource_leases WHERE attempt_id=?", (attempt,))
 
+    def finish_probe_in(self, db: sqlite3.Connection, attempt: str, context: str, tab: str) -> None:
+        if self._actions_to_reconcile(self._events(db, attempt)):
+            raise RuntimeError("Cannot finish probe while browser effects are unresolved")
+        db.execute("DELETE FROM resource_leases WHERE attempt_id=?", (attempt,))
+        db.execute(
+            "DELETE FROM tab_leases WHERE context_id=? AND tab_id=? AND attempt_id=?",
+            (context, tab, attempt),
+        )
+
     def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
             db.execute(

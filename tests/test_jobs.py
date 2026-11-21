@@ -29,3 +29,16 @@ class JobTests(unittest.TestCase):
         queue.enqueue("later", "explore", {})
         queue.enqueue("first", "explore", {}, priority=2)
         self.assertEqual(queue.claim("explore", now_ns=0, lease_ns=1).id, "first")
+
+    def test_finalize_failure_leaves_job_available_to_retry(self):
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        queue = JobQueue(path)
+        queue.enqueue("probe", "probe", {})
+        job = queue.claim("probe", now_ns=0, lease_ns=10)
+
+        def fail(_):
+            raise RuntimeError("cleanup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            queue.complete(job, {}, now_ns=1, finalize=fail)
+        self.assertIsNotNone(JobQueue(path).claim("probe", now_ns=10, lease_ns=10))

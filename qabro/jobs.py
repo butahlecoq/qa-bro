@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,10 +84,13 @@ class JobQueue:
         if row is None:
             raise PermissionError("Job lease is no longer active")
 
-    def complete(self, job: Job, result: dict, *, now_ns: int) -> bool:
+    def complete(
+        self, job: Job, result: dict, *, now_ns: int,
+        finalize: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> bool:
         encoded = json.dumps(result, sort_keys=True, allow_nan=False)
         with closing(sqlite3.connect(self.path)) as db, db:
-            return db.execute(
+            accepted = db.execute(
                 """
                 UPDATE jobs SET result=?
                 WHERE id=? AND lease=? AND (
@@ -95,3 +99,6 @@ class JobQueue:
                 """,
                 (encoded, job.id, job.lease, now_ns, encoded),
             ).rowcount == 1
+            if accepted and finalize is not None:
+                finalize(db)
+            return accepted

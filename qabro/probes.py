@@ -62,6 +62,7 @@ def run_next_probe(
         if result is None or journal.actions_to_reconcile(attempt):
             return False
         journal.append(attempt, "probe:result", "probe_result", result, authorize=browser.authorize)
-    journal.release_resources(attempt)
-    journal.release_tab(context, tab, attempt)
-    return queue.complete(job, result, now_ns=clock())
+    return queue.complete(
+        job, result, now_ns=clock(),
+        finalize=lambda db: journal.finish_probe_in(db, attempt, context, tab),
+    )
