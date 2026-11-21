@@ -1,0 +1,104 @@
+"""Persistent ordered events and browser tab ownership."""
+
+import json
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+
+class Journal:
+    def __init__(self, path: Path):
+        self.path = path
+        with closing(self._connect()) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS attempts (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    worker_id TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS events (
+                    attempt_id TEXT NOT NULL REFERENCES attempts(id),
+                    sequence INTEGER NOT NULL,
+                    event_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (attempt_id, sequence),
+                    UNIQUE (attempt_id, event_id)
+                );
+                CREATE TABLE IF NOT EXISTS tab_leases (
+                    context_id TEXT NOT NULL,
+                    tab_id TEXT NOT NULL,
+                    attempt_id TEXT NOT NULL REFERENCES attempts(id),
+                    PRIMARY KEY (context_id, tab_id)
+                );
+            """)
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.path)
+        db.execute("PRAGMA foreign_keys=ON")
+        return db
+
+    def start(self, attempt: str, run: str, worker: str) -> None:
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT INTO attempts VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
+                (attempt, run, worker),
+            )
+            owner = db.execute(
+                "SELECT run_id, worker_id FROM attempts WHERE id=?", (attempt,)
+            ).fetchone()
+            if owner != (run, worker):
+                raise ValueError("Attempt already belongs to a different run or worker")
+
+    def append(self, attempt: str, event: str, kind: str, payload: dict) -> int:
+        encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT sequence, kind, payload FROM events WHERE attempt_id=? AND event_id=?",
+                (attempt, event),
+            ).fetchone()
+            if existing is not None:
+                sequence, old_kind, old_payload = existing
+                if (old_kind, old_payload) != (kind, encoded):
+                    raise ValueError("Event ID already records different evidence")
+                return sequence
+            return db.execute(
+                """
+                INSERT INTO events
+                SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?
+                FROM events WHERE attempt_id=?
+                RETURNING sequence
+                """,
+                (attempt, event, kind, encoded, attempt),
+            ).fetchone()[0]
+
+    def events(self, attempt: str) -> list[tuple[int, str, str, dict]]:
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT sequence, event_id, kind, payload FROM events "
+                "WHERE attempt_id=? ORDER BY sequence",
+                (attempt,),
+            )
+            return [(sequence, event, kind, json.loads(payload))
+                    for sequence, event, kind, payload in rows]
+
+    def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT INTO tab_leases VALUES (?, ?, ?) "
+                "ON CONFLICT(context_id, tab_id) DO NOTHING",
+                (context, tab, attempt),
+            )
+            return db.execute(
+                "SELECT attempt_id FROM tab_leases WHERE context_id=? AND tab_id=?",
+                (context, tab),
+            ).fetchone() == (attempt,)
+
+    def release_tab(self, context: str, tab: str, attempt: str) -> bool:
+        with closing(self._connect()) as db, db:
+            return db.execute(
+                "DELETE FROM tab_leases WHERE context_id=? AND tab_id=? AND attempt_id=?",
+                (context, tab, attempt),
+            ).rowcount == 1
