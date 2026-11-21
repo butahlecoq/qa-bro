@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from time import time_ns
 
-from qabro.catalog import Scope
+from qabro.catalog import Catalog, Scope
 from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
 from qabro.recipe_format import encode_recipe
@@ -91,6 +91,7 @@ def explore_next(
     synthesize: Callable[[Job], HintDraft | None],
     *,
     clock: Callable[[], int] = time_ns,
+    catalog: Catalog | None = None,
 ) -> bool:
     """Store a synthesis result and enqueue validation in the same transaction."""
     job = queue.claim("explore", now_ns=clock(), lease_ns=60_000_000_000)
@@ -103,6 +104,12 @@ def explore_next(
         raise ValueError("A candidate requires a summary, hint and claimed variants")
     if min(draft.model_tokens, draft.browser_ns) < 0:
         raise ValueError("Explorer usage must be nonnegative")
+    if catalog is not None and draft.recipe is None and catalog.has_active_hint(
+        Scope(**job.payload["scope"]), draft.hint, draft.capabilities,
+    ):
+        return queue.complete(job, {
+            "status": "already_published", "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns,
+        }, now_ns=clock())
     payload = {
         "scope": job.payload["scope"],
         "operation": job.payload["operation"],

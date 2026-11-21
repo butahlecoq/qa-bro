@@ -306,3 +306,17 @@ class Catalog:
                 (run, ref.id, ref.revision),
             ).fetchone()
             return decode_recipe(row[0]) if row else None
+
+
+    def has_active_hint(self, scope: Scope, hint: str, capabilities: frozenset[str]) -> bool:
+        with closing(sqlite3.connect(self.path)) as db:
+            return db.execute(
+                """
+                SELECT 1 FROM active_skills a JOIN skill_revisions r ON r.row_id=a.row_id
+                WHERE r.platform=? AND r.component=? AND r.context=? AND r.role=?
+                  AND r.hint=? AND r.capabilities=?
+                LIMIT 1
+                """,
+                (scope.platform, scope.component, scope.context, scope.role,
+                 hint, json.dumps(sorted(capabilities))),
+            ).fetchone() is not None

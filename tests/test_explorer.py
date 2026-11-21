@@ -74,3 +74,25 @@ class ExplorerTests(unittest.TestCase):
         self.assertEqual(job.payload["sources"][0]["evidence_id"], "a-proof")
         catalog.pin("before-validation")
         self.assertEqual(catalog.search("before-validation", "date", scope, frozenset()), [])
+
+    def test_existing_hint_only_deduplicates_the_matching_scope(self):
+        from qabro.catalog import Catalog, SkillRef
+        from qabro.explorer import HintDraft, explore_next
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        catalog, queue = Catalog(path), JobQueue(path)
+        scope = Scope("fixture", "calendar", "requirements", "editor")
+        other = Scope("fixture", "calendar", "orders", "editor")
+        hint = "Use the date field."
+        catalog.seed_verified_hint(SkillRef("date", "1", "Choose date"), scope, hint)
+        for current in (scope, other):
+            queue_exploration(queue, [
+                Episode(current, "choose date", "a", "a-proof", 3),
+                Episode(current, "choose date", "b", "b-proof", 3),
+            ])
+        draft = HintDraft("Choose a date", hint, ("date",), True, 20, 10)
+        self.assertTrue(explore_next(queue, lambda _: draft, catalog=catalog, clock=lambda: 1))
+        self.assertIsNone(queue.claim("validate_hint", now_ns=1, lease_ns=2))
+        self.assertTrue(explore_next(queue, lambda _: draft, catalog=catalog, clock=lambda: 2))
+        job = queue.claim("validate_hint", now_ns=2, lease_ns=2)
+        self.assertEqual(job.payload["scope"], vars(other))
