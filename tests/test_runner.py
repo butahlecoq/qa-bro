@@ -359,14 +359,14 @@ class RunnerTests(unittest.TestCase):
         from time import monotonic_ns
 
         from qabro.bindings import AttemptBindings
-        from qabro.recipe_checks import ProbeValue, RecipeCheck
+        from qabro.recipe_checks import ProbeValue, RecipeCheck, RepeatCheck
         from qabro.recipe_format import decode_recipe, encode_recipe
         from qabro.runner import Recipe, RecipeStep
 
         journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
         step = Step("save", "Save")
         recipe = Recipe("save", "1", (RecipeStep(
-            step, "click", (("selector", "#recipe"),), guard=RecipeCheck("save-button-unique", "count", 1),
+            step, "click", (("selector", "#recipe"),), guard=RepeatCheck(RecipeCheck("save-button-unique", "count", 1), 2, 1_000_000_000),
         ),))
         self.assertEqual(decode_recipe(encode_recipe(recipe)), recipe)
 
@@ -380,11 +380,14 @@ class RunnerTests(unittest.TestCase):
                     calls.append(arguments["selector"])
                     return {"content": [{"type": "text", "text": "ok"}]}
 
+                samples = []
+
                 def check(source, name):
+                    samples.append(name)
                     self.assertEqual((source, name), (step, "save-button-unique"))
                     if mode != "missing":
                         return ProbeValue(0 if mode == "stale" else monotonic_ns(),
-                                          "snapshot-1", [] if mode == "mismatch" else ["save"])
+                                          "snapshot-1", [] if mode == "mismatch" or len(samples) == 1 else ["save"])
                     return None
 
                 browser = BrowserCalls(journal, mode, "shared", mode, transport, lambda value: value)
@@ -398,7 +401,8 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(calls, ["#recipe" if mode == "fresh" else "#ordinary"])
                 guard, = [payload for _, _, kind, payload in journal.events(mode) if kind == "recipe_guard"]
                 self.assertEqual(guard["passed"], mode == "fresh")
-                self.assertEqual(guard["artifact_id"], None if mode == "missing" else "snapshot-1")
+                self.assertEqual(guard["samples"], 2)
+                self.assertEqual(guard["artifact_id"], None if mode in {"missing", "stale"} else "snapshot-1")
 
     def test_branch_discards_a_match_returned_after_its_deadline(self):
         from datetime import UTC, datetime

@@ -46,3 +46,16 @@ class RecipeCheck:
         elif self.operator in {"equals", "visible", "state"} and expected is not None and type(actual) is type(expected):
             matches = actual == expected
         return Evidence(observation.observed_ns, observation.artifact_id, matches)
+
+
+@dataclass(frozen=True)
+class RepeatCheck:
+    check: RecipeCheck
+    max_samples: int
+    max_wait_ns: int
+
+    def __post_init__(self):
+        if type(self.max_samples) is not int or not 1 <= self.max_samples <= 20:
+            raise ValueError("A repeated check requires between one and twenty samples")
+        if type(self.max_wait_ns) is not int or self.max_wait_ns <= 0:
+            raise ValueError("A repeated check requires a positive time limit")

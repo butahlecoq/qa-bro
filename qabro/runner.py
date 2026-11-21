@@ -12,7 +12,7 @@ from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
-from qabro.recipe_checks import ProbeValue, RecipeCheck
+from qabro.recipe_checks import ProbeValue, RecipeCheck, RepeatCheck
 from qabro.recovery import Effect, confirmed_effect
 
 
@@ -72,10 +72,12 @@ class RecipeStep:
     tool: str
     arguments: tuple[tuple[str, str | Parameter], ...]
     branch: ArgumentBranch | None = None
-    guard: str | RecipeCheck | None = None
+    guard: str | RecipeCheck | RepeatCheck | None = None
 
     @property
     def guard_probe(self) -> str | None:
+        if isinstance(self.guard, RepeatCheck):
+            return self.guard.check.probe
         return self.guard.probe if isinstance(self.guard, RecipeCheck) else self.guard
 
     def resolve(
@@ -156,6 +158,30 @@ def _evaluate_recipe_check(
         value = bound.id if isinstance(bound, Option) else bound
     observation = observe(step, check.probe)
     return check.evaluate(observation, bound_value=value) if observation is not None else None
+
+
+def _repeat_recipe_check(
+    repeat: RepeatCheck, sample: Callable[[], Evidence | None], browser: BrowserCalls,
+) -> tuple[Evidence | None, int]:
+    deadline = monotonic_ns() + repeat.max_wait_ns
+    evidence = None
+    samples = 0
+    try:
+        with browser.budget.until(deadline) if browser.budget else nullcontext():
+            for _ in range(repeat.max_samples):
+                started = monotonic_ns()
+                if started >= deadline:
+                    break
+                samples += 1
+                proof = sample()
+                if proof is not None and started <= proof.observed_ns <= monotonic_ns() < deadline:
+                    evidence = proof
+                    if proof.matches is True:
+                        break
+    except (BudgetExhausted, TimeoutError):
+        if monotonic_ns() < deadline:
+            raise
+    return evidence, samples
 
 
 def run_scenario(
@@ -262,7 +288,16 @@ def run_scenario(
                     if item.guard is not None:
                         started = monotonic_ns()
                         proof = None
-                        if isinstance(item.guard, RecipeCheck) and observe_recipe is not None:
+                        samples = None
+                        if isinstance(item.guard, RepeatCheck) and observe_recipe is not None:
+                            proof, samples = _repeat_recipe_check(
+                                item.guard,
+                                lambda: _evaluate_recipe_check(
+                                    item.guard.check, step, observe_recipe, bindings, read_options,
+                                ),
+                                browser,
+                            )
+                        elif isinstance(item.guard, RecipeCheck) and observe_recipe is not None:
                             proof = _evaluate_recipe_check(item.guard, step, observe_recipe, bindings, read_options)
                         elif isinstance(item.guard, str) and check_recipe_guard is not None:
                             proof = check_recipe_guard(step, item.guard)
@@ -274,6 +309,7 @@ def run_scenario(
                         journal.append(attempt_id, guard_event, "recipe_guard", {
                             "step": step.id, "probe": item.guard_probe, "passed": guard_passed,
                             "artifact_id": proof.artifact_id if proof else None,
+                            **({"samples": samples} if samples is not None else {}),
                         })
                     branch_value = None
                     branch_event = None
