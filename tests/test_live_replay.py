@@ -56,3 +56,65 @@ class LiveReplayTests(unittest.TestCase):
                     self.assertEqual(references, {
                         result["checkpoints"][0]["artifact_id"] for result in results
                     })
+
+    def test_recipe_checks_fresh_browser_snapshot_before_acting(self):
+        from datetime import UTC, datetime
+        from time import monotonic_ns
+
+        from qabro.artifacts import ArtifactStore
+        from qabro.bindings import AttemptBindings
+        from qabro.browser import BrowserCalls, Outcome
+        from qabro.contract import Scenario, Step
+        from qabro.recipe_checks import ProbeValue, RecipeCheck
+        from qabro.runner import Action, Recipe, RecipeStep, run_scenario
+
+        executable = os.environ.get("QABRO_BROWSE", "browse")
+        url = os.environ["QABRO_FIXTURE_URL"]
+        parsed = urlsplit(url)
+        tab = f"guard-{uuid4().hex[:12]}"
+        database = Path(self.enterContext(TemporaryDirectory())) / "guard.sqlite"
+        journal, artifacts = Journal(database), ArtifactStore(database)
+        journal.start(tab, tab, "worker")
+        self.assertTrue(journal.claim_tab("fixture", tab, tab))
+        opening, fill = Step("open", "Open form"), Step("fill", "Fill name")
+        scenario = Scenario("Open the form and fill the name.", (opening, fill))
+        recipe = Recipe("fill", "1", (RecipeStep(
+            fill, "fill", (("selector", "input[name=name]"), ("value", "Guard sample")),
+            guard=RecipeCheck("name-field", "visible", True),
+        ),))
+
+        with BrowseTransport(executable) as live:
+            live.prepare_tab(tab, allowed_origins=(f"{parsed.scheme}://{parsed.netloc}",))
+            try:
+                browser = BrowserCalls(journal, tab, "fixture", tab, live, lambda value: value, artifacts=artifacts)
+
+                def resolve(step):
+                    self.assertEqual(step, opening)
+                    return Action("navigate", {"url": url})
+
+                def observe(step, probe):
+                    self.assertEqual((step, probe), (fill, "name-field"))
+                    result = browser.invoke("name-field", step.id, "snapshot", {}, read_only=True)
+                    self.assertIs(result.outcome, Outcome.RETURNED)
+                    return ProbeValue(monotonic_ns(), result.artifact_id, 'textbox "Name"' in str(result.raw))
+
+                result = run_scenario(
+                    scenario, browser, resolve, lambda *_: None,
+                    choose=lambda step: recipe if step == fill else None, applicable=lambda _: True,
+                    bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)), observe_recipe=observe,
+                )
+                self.assertIs(result.verdict, Verdict.PASS)
+                field = live(tab, "eval", {
+                    "selector": "input[name=name]", "expression": "element => element.value",
+                })
+                self.assertIn("Guard sample", str(field))
+            finally:
+                live(tab, "tabs", {"action": "close"})
+
+        events = journal.events(tab)
+        guard_sequence, _, _, guard = next(event for event in events if event[2] == "recipe_guard")
+        dispatch_sequence = next(seq for seq, _, kind, data in events
+                                 if kind == "tool_start" and data["tool"] == "fill")
+        self.assertLess(guard_sequence, dispatch_sequence)
+        self.assertTrue(guard["passed"])
+        self.assertIsNotNone(artifacts.get(guard["artifact_id"]))
