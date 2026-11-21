@@ -348,3 +348,48 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(calls, [{"selector": "#compact"}])
         event = next(payload for _, _, kind, payload in journal.events("attempt") if kind == "recipe_branch")
         self.assertEqual(event, {"probe": "compact", "outcome": True, "samples": 2})
+
+    def test_recipe_guard_requires_fresh_matching_evidence(self):
+        from datetime import UTC, datetime
+        from time import monotonic_ns
+
+        from qabro.bindings import AttemptBindings
+        from qabro.recipe_format import decode_recipe, encode_recipe
+        from qabro.runner import Recipe, RecipeStep
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        step = Step("save", "Save")
+        recipe = Recipe("save", "1", (RecipeStep(
+            step, "click", (("selector", "#recipe"),), guard="save-button-unique",
+        ),))
+        self.assertEqual(decode_recipe(encode_recipe(recipe)), recipe)
+
+        for mode in ("fresh", "stale", "mismatch", "missing"):
+            with self.subTest(mode=mode):
+                journal.start(mode, mode, "worker")
+                journal.claim_tab("shared", mode, mode)
+                calls = []
+
+                def transport(tab, tool, arguments):
+                    calls.append(arguments["selector"])
+                    return {"content": [{"type": "text", "text": "ok"}]}
+
+                def check(source, name):
+                    self.assertEqual((source, name), (step, "save-button-unique"))
+                    if mode != "missing":
+                        return Evidence(0 if mode == "stale" else monotonic_ns(),
+                                        "snapshot-1", mode != "mismatch")
+                    return None
+
+                browser = BrowserCalls(journal, mode, "shared", mode, transport, lambda value: value)
+                result = run_scenario(
+                    Scenario("Save", (step,)), browser,
+                    lambda _: Action("click", {"selector": "#ordinary"}), lambda *_: None,
+                    choose=lambda _: recipe, applicable=lambda _: True, check_recipe_guard=check,
+                    bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)),
+                )
+                self.assertEqual(result.verdict, Verdict.PASS)
+                self.assertEqual(calls, ["#recipe" if mode == "fresh" else "#ordinary"])
+                guard, = [payload for _, _, kind, payload in journal.events(mode) if kind == "recipe_guard"]
+                self.assertEqual(guard["passed"], mode == "fresh")
+                self.assertEqual(guard["artifact_id"], None if mode == "missing" else "snapshot-1")

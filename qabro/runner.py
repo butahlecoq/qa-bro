@@ -1,8 +1,7 @@
 """Run a source scenario through the shared browser call boundary."""
 
-import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from hashlib import sha256
 from time import monotonic_ns, sleep
 from uuid import uuid4
@@ -65,6 +64,7 @@ class RecipeStep:
     tool: str
     arguments: tuple[tuple[str, str | Parameter], ...]
     branch: ArgumentBranch | None = None
+    guard: str | None = None
 
     def resolve(
         self, bindings: AttemptBindings, read_options: Callable[[str], Options] | None = None,
@@ -101,7 +101,9 @@ class Recipe:
 
     @property
     def fingerprint(self) -> str:
-        return sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+        from qabro.recipe_format import encode_recipe
+
+        return sha256(encode_recipe(self).encode()).hexdigest()
 
 
 
@@ -144,6 +146,7 @@ def run_scenario(
     max_actions: int | None = None,
     read_options: Callable[[str], Options] | None = None,
     probe_branch: Callable[[Step, str, int], bool | None] | None = None,
+    check_recipe_guard: Callable[[Step, str], Evidence | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     allow_retry: Callable[[Step, Action], bool] | None = None,
     resume: bool = False,
@@ -225,11 +228,23 @@ def run_scenario(
                             })
                 if index in planned and bindings is not None:
                     item = planned[index]
+                    guard_passed = True
+                    if item.guard is not None:
+                        started = monotonic_ns()
+                        proof = check_recipe_guard(step, item.guard) if check_recipe_guard else None
+                        guard_passed = (
+                            proof is not None and started <= proof.observed_ns <= monotonic_ns()
+                            and proof.matches is True
+                        )
+                        journal.append(attempt_id, f"{action_id}:guard:{uuid4().hex}", "recipe_guard", {
+                            "step": step.id, "probe": item.guard, "passed": guard_passed,
+                            "artifact_id": proof.artifact_id if proof else None,
+                        })
                     branch_value = None
                     prior_branch = saved.get(f"{action_id}:branch")
                     if prior_branch is not None:
                         branch_value = prior_branch["outcome"]
-                    elif item.branch is not None and probe_branch is not None:
+                    elif guard_passed and item.branch is not None and probe_branch is not None:
                         for sample in range(item.branch.max_samples):
                             if browser.budget is not None:
                                 browser.budget.remaining_seconds()
@@ -239,7 +254,7 @@ def run_scenario(
                         journal.append(attempt_id, f"{action_id}:branch", "recipe_branch", {
                             "probe": item.branch.probe, "outcome": branch_value, "samples": sample + 1,
                         })
-                    if item.branch is not None and branch_value is None:
+                    if not guard_passed or (item.branch is not None and branch_value is None):
                         action = resolve(step)
                     else:
                         action = item.resolve(bindings, read_options, branch_value=branch_value)

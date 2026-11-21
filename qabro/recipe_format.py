@@ -8,7 +8,11 @@ from qabro.runner import ArgumentBranch, Parameter, Recipe, RecipeCall, RecipeSt
 
 
 def encode_recipe(recipe: Recipe) -> str:
-    return json.dumps(asdict(recipe), sort_keys=True, allow_nan=False)
+    data = asdict(recipe)
+    for node in data["steps"]:
+        if node.get("guard") is None:
+            node.pop("guard", None)
+    return json.dumps(data, sort_keys=True, allow_nan=False)
 
 
 def decode_recipe(encoded: str) -> Recipe:
@@ -27,7 +31,7 @@ def decode_recipe(encoded: str) -> Recipe:
         ) if branch is not None else None
         steps.append(RecipeStep(
             Step(source["id"], source["action"], checkpoints), entry["tool"],
-            _arguments(entry["arguments"]), condition,
+            _arguments(entry["arguments"]), condition, entry.get("guard"),
         ))
     return Recipe(data["id"], data["revision"], tuple(steps))
 
