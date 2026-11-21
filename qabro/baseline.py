@@ -9,6 +9,7 @@ from uuid import uuid4
 from qabro.artifacts import ArtifactStore
 from qabro.browser import BrowserCalls, Outcome
 from qabro.browse_transport import BrowseTransport
+from qabro.budget import Budget
 from qabro.contract import Checkpoint, Scenario, Step
 from qabro.evidence import Evidence
 from qabro.journal import Journal
@@ -33,10 +34,11 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str) -> dict:
     scenario = Scenario("Open, fill name and due date, select category, and create.", tuple(
         Step(key, key, (checkpoint,) if key == "create" else ()) for key in commands
     ))
-    with BrowseTransport(executable) as transport:
+    budget = Budget(browser_calls=6, model_calls=0, seconds=30)
+    with BrowseTransport(executable, budget=budget) as transport:
         # The fixture uses synthetic values in a dedicated browser context.
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
-                               artifacts=artifacts)
+                               artifacts=artifacts, budget=budget)
 
         def observe(check: Checkpoint, sample: int) -> Evidence | None:
             result = browser.invoke(f"{check.id}:sample:{sample}", "create", "snapshot", {}, read_only=True)

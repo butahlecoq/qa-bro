@@ -6,11 +6,14 @@ import selectors
 import subprocess
 from time import monotonic
 
+from qabro.budget import Budget
+
 
 class BrowseTransport:
-    def __init__(self, executable: str = "browse", *, timeout: float = 15):
+    def __init__(self, executable: str = "browse", *, timeout: float = 15, budget: Budget | None = None):
         self.executable = executable
         self.timeout = timeout
+        self.budget = budget
         self._buffer = bytearray()
         self._request_id = 0
 
@@ -50,9 +53,12 @@ class BrowseTransport:
         self._process.stdin.flush()
 
     def request(self, method: str, params: dict) -> dict:
+        timeout = self.timeout
+        if self.budget is not None:
+            timeout = min(timeout, self.budget.remaining_seconds())
+        deadline = monotonic() + timeout
         self._request_id += 1
         self._send({"id": self._request_id, "method": method, "params": params})
-        deadline = monotonic() + self.timeout
         while True:
             end = self._buffer.find(b"\n")
             if end >= 0:
