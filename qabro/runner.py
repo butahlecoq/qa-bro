@@ -73,6 +73,7 @@ def run_scenario(
     journal.append(attempt_id, "scenario:start", "scenario_start", {
         "source_hash": scenario.source_hash,
         "contract_revision": revision,
+        "binding_revision": bindings.revision if bindings else None,
         "step_ids": [step.id for step in scenario.steps],
     }, reserve=not resume)
     completed = []

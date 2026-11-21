@@ -48,3 +48,18 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(reopened.use("first"), first)
         self.assertEqual(reopened.use("item"), last)
         self.assertEqual(reopened.use("next"), control.use("next"))
+
+    def test_reopen_rejects_changed_binding_rules_before_use(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.journal import Journal
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("a", "run", "worker")
+        time = datetime(2026, 1, 1, tzinfo=UTC)
+        options = {"seed": 15, "base_time": time, "journal": journal, "attempt": "a"}
+        AttemptBindings({"item": Select(last=True)}, **options)
+        with self.assertRaisesRegex(ValueError, "different evidence"):
+            AttemptBindings({"item": Select(last=False)}, **options)

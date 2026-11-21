@@ -1,7 +1,9 @@
 """Scenario inputs resolved against the current attempt."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from hashlib import sha256
 from random import Random
 from string import ascii_letters
 
@@ -71,7 +73,7 @@ class AttemptBindings:
         self._attempt = attempt
         if journal is not None and attempt is not None:
             journal.append(attempt, "bindings:setup", "binding_setup", {
-                "seed": seed, "base_time": base_time.isoformat(),
+                "seed": seed, "base_time": base_time.isoformat(), "revision": self.revision,
             })
             for _, _, kind, payload in journal.events(attempt):
                 if kind != "binding_used":
@@ -87,6 +89,12 @@ class AttemptBindings:
                     self._values[key] = Option(payload["id"], payload["label"])
                 else:
                     raise ValueError(f"Binding rule changed for {key!r}")
+
+    @property
+    def revision(self) -> str:
+        rules = {key: (type(rule).__name__, asdict(rule)) for key, rule in self._rules.items()}
+        data = {"rules": rules, "seed": self.seed, "base_time": self.base_time.isoformat()}
+        return sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
     def use(self, key: str, *, options: Options | None = None) -> str | Option:
         """Resolve on first use and keep the selected identity for this attempt."""
