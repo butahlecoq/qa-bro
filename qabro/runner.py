@@ -12,6 +12,7 @@ from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
+from qabro.recipe_checks import ProbeValue, RecipeCheck
 from qabro.recovery import Effect, confirmed_effect
 
 
@@ -68,7 +69,11 @@ class RecipeStep:
     tool: str
     arguments: tuple[tuple[str, str | Parameter], ...]
     branch: ArgumentBranch | None = None
-    guard: str | None = None
+    guard: str | RecipeCheck | None = None
+
+    @property
+    def guard_probe(self) -> str | None:
+        return self.guard.probe if isinstance(self.guard, RecipeCheck) else self.guard
 
     def resolve(
         self, bindings: AttemptBindings, read_options: Callable[[str], Options] | None = None,
@@ -151,6 +156,7 @@ def run_scenario(
     read_options: Callable[[str], Options] | None = None,
     probe_branch: Callable[[Step, str, int], bool | None] | None = None,
     check_recipe_guard: Callable[[Step, str], Evidence | None] | None = None,
+    observe_recipe: Callable[[Step, str], ProbeValue | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     allow_retry: Callable[[Step, Action], bool] | None = None,
     resume: bool = False,
@@ -229,7 +235,7 @@ def run_scenario(
                                 "steps": [item.id for item in covered],
                                 "branch_steps": [offset for offset, item in enumerate(expanded)
                                                  if item.branch is not None],
-                                "guard_steps": {str(offset): item.guard for offset, item in enumerate(expanded)
+                                "guard_steps": {str(offset): item.guard_probe for offset, item in enumerate(expanded)
                                                 if item.guard is not None},
                             })
                 if index in planned and bindings is not None:
@@ -238,14 +244,24 @@ def run_scenario(
                     guard_event = None
                     if item.guard is not None:
                         started = monotonic_ns()
-                        proof = check_recipe_guard(step, item.guard) if check_recipe_guard else None
+                        proof = None
+                        if isinstance(item.guard, RecipeCheck) and observe_recipe is not None:
+                            value = None
+                            if item.guard.binding is not None:
+                                bound = bindings.resolve(item.guard.binding, read_options)
+                                value = bound.id if isinstance(bound, Option) else bound
+                            observation = observe_recipe(step, item.guard.probe)
+                            if observation is not None:
+                                proof = item.guard.evaluate(observation, bound_value=value)
+                        elif isinstance(item.guard, str) and check_recipe_guard is not None:
+                            proof = check_recipe_guard(step, item.guard)
                         guard_passed = (
                             proof is not None and started <= proof.observed_ns <= monotonic_ns()
                             and proof.matches is True
                         )
                         guard_event = f"{action_id}:guard:{uuid4().hex}"
                         journal.append(attempt_id, guard_event, "recipe_guard", {
-                            "step": step.id, "probe": item.guard, "passed": guard_passed,
+                            "step": step.id, "probe": item.guard_probe, "passed": guard_passed,
                             "artifact_id": proof.artifact_id if proof else None,
                         })
                     branch_value = None

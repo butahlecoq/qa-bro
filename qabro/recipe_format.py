@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 
 from qabro.contract import Checkpoint, Step
+from qabro.recipe_checks import RecipeCheck
 from qabro.runner import ArgumentBranch, Parameter, Recipe, RecipeCall, RecipeStep
 
 
@@ -32,9 +33,12 @@ def decode_recipe(encoded: str) -> Recipe:
             branch["probe"], _arguments(branch["when_true"]), _arguments(branch["when_false"]),
             branch.get("max_samples", 1), branch.get("max_wait_ns"),
         ) if branch is not None else None
+        guard = entry.get("guard")
+        if isinstance(guard, dict):
+            guard = RecipeCheck(**guard)
         steps.append(RecipeStep(
             Step(source["id"], source["action"], checkpoints), entry["tool"],
-            _arguments(entry["arguments"]), condition, entry.get("guard"),
+            _arguments(entry["arguments"]), condition, guard,
         ))
     return Recipe(data["id"], data["revision"], tuple(steps))
 

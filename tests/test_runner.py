@@ -354,13 +354,14 @@ class RunnerTests(unittest.TestCase):
         from time import monotonic_ns
 
         from qabro.bindings import AttemptBindings
+        from qabro.recipe_checks import ProbeValue, RecipeCheck
         from qabro.recipe_format import decode_recipe, encode_recipe
         from qabro.runner import Recipe, RecipeStep
 
         journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
         step = Step("save", "Save")
         recipe = Recipe("save", "1", (RecipeStep(
-            step, "click", (("selector", "#recipe"),), guard="save-button-unique",
+            step, "click", (("selector", "#recipe"),), guard=RecipeCheck("save-button-unique", "count", 1),
         ),))
         self.assertEqual(decode_recipe(encode_recipe(recipe)), recipe)
 
@@ -377,15 +378,15 @@ class RunnerTests(unittest.TestCase):
                 def check(source, name):
                     self.assertEqual((source, name), (step, "save-button-unique"))
                     if mode != "missing":
-                        return Evidence(0 if mode == "stale" else monotonic_ns(),
-                                        "snapshot-1", mode != "mismatch")
+                        return ProbeValue(0 if mode == "stale" else monotonic_ns(),
+                                          "snapshot-1", [] if mode == "mismatch" else ["save"])
                     return None
 
                 browser = BrowserCalls(journal, mode, "shared", mode, transport, lambda value: value)
                 result = run_scenario(
                     Scenario("Save", (step,)), browser,
                     lambda _: Action("click", {"selector": "#ordinary"}), lambda *_: None,
-                    choose=lambda _: recipe, applicable=lambda _: True, check_recipe_guard=check,
+                    choose=lambda _: recipe, applicable=lambda _: True, observe_recipe=check,
                     bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)),
                 )
                 self.assertEqual(result.verdict, Verdict.PASS)
