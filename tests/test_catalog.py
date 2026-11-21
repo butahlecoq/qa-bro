@@ -71,3 +71,10 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(catalog.search("new", "search", scope, frozenset()), [])
         self.assertEqual(catalog.search("new", "search", independent_scope, frozenset()), [independent])
         self.assertEqual(catalog.search("old", "search", scope, frozenset()), [latest])
+        from qabro.jobs import JobQueue
+
+        queue = JobQueue(catalog.path)
+        jobs = [queue.claim("revalidate", now_ns=1, lease_ns=10) for _ in range(2)]
+        self.assertEqual([job.payload["skill"]["revision"] for job in jobs], ["1", "2"])
+        self.assertEqual([job.payload["scope"]["context"] for job in jobs], ["requirements"] * 2)
+        self.assertIsNone(queue.claim("revalidate", now_ns=1, lease_ns=10))

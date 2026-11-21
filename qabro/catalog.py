@@ -4,8 +4,10 @@ import json
 import re
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from qabro.jobs import JobQueue
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class SkillRef:
 class Catalog:
     def __init__(self, path: Path):
         self.path = path
+        self.jobs = JobQueue(path)
         with closing(sqlite3.connect(path)) as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS skill_revisions (
@@ -135,7 +138,14 @@ class Catalog:
                 "DELETE FROM active_skills WHERE row_id=?",
                 ((row_id,) for row_id, *_ in rows),
             )
-            return [SkillRef(skill_id, revision, summary) for _, skill_id, revision, summary in rows]
+            refs = []
+            for row_id, skill_id, revision, summary in rows:
+                ref = SkillRef(skill_id, revision, summary)
+                self.jobs.enqueue_in(db, f"revalidate:{row_id}", "revalidate", {
+                    "skill": asdict(ref), "scope": asdict(scope), "reason": reason,
+                })
+                refs.append(ref)
+            return refs
 
     def pin(self, run: str) -> None:
         with closing(sqlite3.connect(self.path)) as db, db:

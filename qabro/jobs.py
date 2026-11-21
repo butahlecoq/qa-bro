@@ -34,16 +34,23 @@ class JobQueue:
             """)
 
     def enqueue(self, job_id: str, kind: str, payload: dict, *, priority: int = 0) -> None:
-        encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
         with closing(sqlite3.connect(self.path)) as db, db:
-            db.execute(
-                "INSERT INTO jobs(id, kind, payload, priority) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(id) DO NOTHING",
-                (job_id, kind, encoded, priority),
-            )
-            stored = db.execute("SELECT kind, payload, priority FROM jobs WHERE id=?", (job_id,))
-            if stored.fetchone() != (kind, encoded, priority):
-                raise ValueError("Job ID already refers to different work")
+            self.enqueue_in(db, job_id, kind, payload, priority=priority)
+
+    @staticmethod
+    def enqueue_in(
+        db: sqlite3.Connection, job_id: str, kind: str, payload: dict, *, priority: int = 0,
+    ) -> None:
+        encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
+        db.execute(
+            "INSERT INTO jobs(id, kind, payload, priority) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(id) DO NOTHING",
+            (job_id, kind, encoded, priority),
+        )
+        stored = db.execute("SELECT kind, payload, priority FROM jobs WHERE id=?", (job_id,))
+        if stored.fetchone() != (kind, encoded, priority):
+            raise ValueError("Job ID already refers to different work")
+
 
     def claim(self, kind: str, *, now_ns: int, lease_ns: int) -> Job | None:
         if lease_ns <= 0:
