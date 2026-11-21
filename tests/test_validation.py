@@ -147,3 +147,15 @@ class ValidationTests(unittest.TestCase):
         catalog.pin("after-single-branch")
         self.assertEqual(catalog.search("after-single-branch", "category", scope, frozenset({"click"})),
                          [replacement])
+
+        catalog.jobs.enqueue("both-branches", "validate_hint", draft)
+        decisions = iter((True, False, True))
+        self.assertTrue(validate_next_hint(
+            catalog, lambda candidate: validate(candidate, lambda *_: next(decisions)), clock=lambda: 7,
+        ))
+        catalog.pin("after-both-branches")
+        found = catalog.search("after-both-branches", "category", scope, frozenset({"click"}))
+        expected = SkillRef("hint:both-branches", "1", draft["summary"])
+        self.assertCountEqual(found, [replacement, expected])
+        self.assertEqual(catalog.load_recipe("after-both-branches", expected),
+                         replace(fallback_recipe, id=expected.id, revision=expected.revision))
