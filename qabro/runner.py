@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic_ns, sleep
 
+from qabro.bindings import AttemptBindings, Option
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
@@ -15,11 +16,47 @@ class Action:
     arguments: dict
 
 
+@dataclass(frozen=True)
+class Parameter:
+    name: str
+
+
+@dataclass(frozen=True)
+class RecipeStep:
+    source: Step
+    tool: str
+    arguments: tuple[tuple[str, str | Parameter], ...]
+
+    def resolve(self, bindings: AttemptBindings) -> Action:
+        arguments = {}
+        for key, expression in self.arguments:
+            value = bindings.use(expression.name) if isinstance(expression, Parameter) else expression
+            arguments[key] = value.id if isinstance(value, Option) else value
+        return Action(self.tool, arguments)
+
+
+@dataclass(frozen=True)
+class Recipe:
+    id: str
+    revision: str
+    steps: tuple[RecipeStep, ...]
+
+    def __post_init__(self):
+        if not self.steps:
+            raise ValueError("A recipe must implement at least one source step")
+
+
+
 def run_scenario(
     scenario: Scenario,
     browser: BrowserCalls,
     resolve: Callable[[Step], Action],
     observe: Callable[[Checkpoint], Evidence | None],
+    *,
+    choose: Callable[[Step], Recipe | None] | None = None,
+    applicable: Callable[[Recipe], bool] | None = None,
+    bindings: AttemptBindings | None = None,
+    max_actions: int | None = None,
 ) -> Attempt:
     """Execute each source step and stop on a failed or unverified required check."""
     journal = browser.journal
@@ -30,8 +67,21 @@ def run_scenario(
     }, reserve=True)
     completed = []
     observations = {}
+    planned: dict[int, RecipeStep] = {}
     for index, step in enumerate(scenario.steps):
-        action = resolve(step)
+        if max_actions is not None and index >= max_actions:
+            break
+        if index not in planned and choose is not None and applicable is not None and bindings is not None:
+            recipe = choose(step)
+            if recipe is not None:
+                covered = tuple(item.source for item in recipe.steps)
+                if covered == scenario.steps[index:index + len(covered)] and applicable(recipe):
+                    planned.update(enumerate(recipe.steps, start=index))
+                    journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
+                        "id": recipe.id, "revision": recipe.revision,
+                        "steps": [item.id for item in covered],
+                    })
+        action = planned[index].resolve(bindings) if index in planned and bindings is not None else resolve(step)
         opened = monotonic_ns()
         try:
             result = browser.invoke(f"step-{index}", step.id, action.tool, action.arguments)
