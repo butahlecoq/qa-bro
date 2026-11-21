@@ -54,3 +54,23 @@ class ExplorerTests(unittest.TestCase):
         self.assertEqual([source["evidence_id"] for source in job.payload["sources"]], [
             "artifact-a", "artifact-b",
         ])
+
+    def test_explorer_hands_draft_to_validation_without_publishing_it(self):
+        from qabro.catalog import Catalog
+        from qabro.explorer import HintDraft, explore_next
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        catalog, queue = Catalog(path), JobQueue(path)
+        scope = Scope("fixture", "calendar", "requirements", "editor")
+        queue_exploration(queue, [
+            Episode(scope, "choose date", "a", "a-proof", 3),
+            Episode(scope, "choose date", "b", "b-proof", 3),
+        ])
+        draft = HintDraft("Choose a date", "Use the date field.", ("date",), True, 20, 10)
+        self.assertTrue(explore_next(queue, lambda job: draft, clock=lambda: 1))
+        self.assertFalse(explore_next(queue, lambda job: self.fail("duplicate"), clock=lambda: 2))
+        job = queue.claim("validate_hint", now_ns=2, lease_ns=10)
+        self.assertEqual(job.payload["hint"], draft.hint)
+        self.assertEqual(job.payload["sources"][0]["evidence_id"], "a-proof")
+        catalog.pin("before-validation")
+        self.assertEqual(catalog.search("before-validation", "date", scope, frozenset()), [])

@@ -2,11 +2,13 @@
 
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+from time import time_ns
 
 from qabro.catalog import Scope
-from qabro.jobs import JobQueue
+from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
 
 
@@ -68,3 +70,47 @@ def queue_exploration(queue: JobQueue, episodes: list[Episode]) -> list[str]:
         queue.enqueue(job_id, "explore", payload, priority=priority)
         queued.append(job_id)
     return queued
+
+
+@dataclass(frozen=True)
+class HintDraft:
+    summary: str
+    hint: str
+    variants: tuple[str, ...]
+    variable_inputs: bool
+    model_tokens: int
+    browser_ns: int
+
+
+def explore_next(
+    queue: JobQueue,
+    synthesize: Callable[[Job], HintDraft | None],
+    *,
+    clock: Callable[[], int] = time_ns,
+) -> bool:
+    """Store a synthesis result and enqueue validation in the same transaction."""
+    job = queue.claim("explore", now_ns=clock(), lease_ns=60_000_000_000)
+    if job is None:
+        return False
+    draft = synthesize(job)
+    if draft is None:
+        return queue.complete(job, {"status": "no_candidate"}, now_ns=clock())
+    if not draft.summary.strip() or not draft.hint.strip() or not draft.variants:
+        raise ValueError("A candidate requires a summary, hint and claimed variants")
+    if min(draft.model_tokens, draft.browser_ns) < 0:
+        raise ValueError("Explorer usage must be nonnegative")
+    payload = {
+        "scope": job.payload["scope"],
+        "operation": job.payload["operation"],
+        "sources": job.payload["sources"],
+        "summary": draft.summary,
+        "hint": draft.hint,
+        "variants": sorted(set(draft.variants)),
+        "variable_inputs": draft.variable_inputs,
+    }
+    candidate = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return queue.complete(
+        job, {"candidate": candidate, "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns},
+        now_ns=clock(),
+        finalize=lambda db: queue.enqueue_in(db, candidate, "validate_hint", payload),
+    )
