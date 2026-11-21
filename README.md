@@ -92,3 +92,13 @@ PY
     'Find skills for date with qa-skills, read the offered hint, and return its exact text.'
 )
 ```
+
+### Local retention
+
+Run retention against the local evidence database when the tester's workspace is idle.
+
+```sh
+python -m qabro.retention /tmp/qabro-smoke.sqlite --age-days 30 --journal-bytes 10000000 --artifact-bytes 100000000
+```
+
+The report counts stored payload bytes. SQLite file size also includes indexes, free pages, and database overhead. Active leases, unresolved effects, and pinned evidence can keep usage above the configured limits.
