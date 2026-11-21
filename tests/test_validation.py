@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from qabro.catalog import Catalog, Scope, SkillRef
-from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step
+from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step, Verdict
 from qabro.validation import HintCandidate, ValidationRun, publish_hint
 
 
@@ -40,7 +40,7 @@ class ValidationTests(unittest.TestCase):
         from qabro.browser import BrowserCalls
         from qabro.evidence import Evidence
         from qabro.journal import Journal
-        from qabro.runner import Action, Recipe, RecipeStep, run_scenario
+        from qabro.runner import Action, ArgumentBranch, Recipe, RecipeStep, run_scenario
         from qabro.validation import revalidate_next_hint, validate_next_hint, validate_next_transfer
         from qabro.compatibility import propose_transfer
         from qabro.recipe_format import encode_recipe
@@ -122,3 +122,20 @@ class ValidationTests(unittest.TestCase):
         catalog.pin("after-transfer")
         self.assertEqual(catalog.search("after-transfer", "category", scope, frozenset({"click"})), [replacement])
         self.assertEqual(catalog.search("after-transfer", "category", target, frozenset()), [transferred])
+
+        fallback_recipe = Recipe("draft", "2", (
+            RecipeStep(step, "click", (), ArgumentBranch(
+                "compact", (("selector", "#compact"),), (("selector", "#full"),),
+            )),
+        ))
+        draft["recipe"] = encode_recipe(fallback_recipe)
+        catalog.jobs.enqueue("fallback", "validate_hint", draft)
+
+        def validate_fallback(candidate):
+            runs = validate(candidate)
+            self.assertTrue(all(run.result.verdict is Verdict.PASS for run in runs))
+            return runs
+
+        self.assertTrue(validate_next_hint(catalog, validate_fallback, clock=lambda: 5))
+        catalog.pin("after-fallback")
+        self.assertEqual(catalog.search("after-fallback", "category", scope, frozenset({"click"})), [replacement])
