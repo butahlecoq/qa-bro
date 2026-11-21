@@ -125,6 +125,8 @@ When a controlled defect fixture is available, supply `defect_trials` to `valida
 
 Plain browse dispatch remains the default. In a paired local Chromium trial, the single-call prototype preserved the ordered step outcomes and final form state on success and on a failed checkpoint. With a missing target after a successful fill, the form retained the first value on both backends. When the outer `execute` deadline expired during target resolution, the response omitted the completed step prefix. This prevents recovery from using the returned trace to locate the partial effect, so latency savings cannot qualify this prototype for activation.
 
+A local timing check with browse 0.1.5 ran six paired successful executions, alternating which backend ran first. The median was 402.1 ms for plain dispatch (394.6–427.5 ms) and 399.7 ms for `execute` (386.6–410.9 ms). Both modes completed all four operations and produced the expected final field value in all six trials. Timing covered browser dispatch and result parsing after tab preparation. The ranges overlap, and the check did not profile the runtime or measure the end-to-end Pi path. The result is inconclusive for performance and leaves plain dispatch in place.
+
 Run the paired trial with the same relay and fixture as the smoke test. Set `QABRO_BROWSE` if the browse executable is outside `PATH`.
 
 ```sh
