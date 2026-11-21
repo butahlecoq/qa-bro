@@ -19,16 +19,28 @@ class RunSkills:
     def find(self, query: str) -> tuple[SkillRef, ...]:
         return tuple(self.catalog.search(self.run, query, self.scope, self.capabilities))
 
-    def select_recipe(
+    def _select(
         self, step: Step, choose: Callable[[Step, tuple[SkillRef, ...]], SkillRef | None],
-    ) -> Recipe | None:
+    ) -> SkillRef | None:
         options = self.find(step.action)
         selected = choose(step, options) if options else None
         if selected is None:
             return None
         if selected not in options:
             raise ValueError("Agent selected a skill outside the offered scope")
-        return self.catalog.load_recipe(self.run, selected)
+        return selected
+
+    def select_hint(
+        self, step: Step, choose: Callable[[Step, tuple[SkillRef, ...]], SkillRef | None],
+    ) -> str | None:
+        selected = self._select(step, choose)
+        return self.catalog.load_hint(self.run, selected) if selected else None
+
+    def select_recipe(
+        self, step: Step, choose: Callable[[Step, tuple[SkillRef, ...]], SkillRef | None],
+    ) -> Recipe | None:
+        selected = self._select(step, choose)
+        return self.catalog.load_recipe(self.run, selected) if selected else None
 
     def select_with_model(
         self,
