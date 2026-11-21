@@ -119,3 +119,30 @@ class RecoveryTests(unittest.TestCase):
             "effect": "completed", "probe_event_id": "missing:finish",
         })
         self.assertFalse(confirmed_completion(browser, "save"))
+
+    def test_resume_does_not_reconcile_an_action_already_observed_absent(self):
+        from qabro.contract import Scenario, Step, Verdict
+        from qabro.runner import Action, run_scenario
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+
+        def transport(tab, tool, arguments):
+            if tool == "submit":
+                raise KeyboardInterrupt()
+            return {"content": [{"type": "text", "text": "No matching record"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        scenario = Scenario("Submit", (Step("save", "Submit"),))
+        with self.assertRaises(KeyboardInterrupt):
+            run_scenario(scenario, browser, lambda _: Action("submit", {}), lambda *_: None)
+        self.assertIs(reconcile(browser, "step-0", "check", "snapshot", {}, lambda _: Effect.ABSENT),
+                      Effect.ABSENT)
+        browser.journal = Journal(path)
+        result = run_scenario(
+            scenario, browser, lambda _: self.fail("Must not automatically resubmit"), lambda *_: None,
+            recover=lambda *_: self.fail("The effect was already reconciled"), resume=True,
+        )
+        self.assertEqual(result.verdict, Verdict.INCONCLUSIVE)

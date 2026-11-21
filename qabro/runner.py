@@ -243,7 +243,7 @@ def run_scenario(
                     result = None
                 succeeded = result is not None and result.outcome is Outcome.RETURNED
             if not succeeded:
-                if recover is not None and saved.get(f"{action_id}:reconciled", {}).get("effect") != "completed":
+                if recover is not None and action_id in dict(journal.actions_to_reconcile(attempt_id)):
                     recover(action_id, step)
                 if not confirmed_completion(browser, action_id):
                     journal.append(attempt_id, f"{action_id}:uncertain", "unresolved_effect", {
