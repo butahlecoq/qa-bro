@@ -37,22 +37,23 @@ def reconcile(
     return effect
 
 
-def confirmed_completion(browser: BrowserCalls, action: str) -> bool:
-    """Verify that the completion claim links to a successful, later read-only probe."""
+def confirmed_effect(browser: BrowserCalls, action: str) -> Effect:
+    """Verify that the effect claim links to a successful, later read-only probe."""
     events = {event: (sequence, kind, data) for sequence, event, kind, data
               in browser.journal.events(browser.attempt)}
     original = events.get(f"{action}:start")
     claim = events.get(f"{action}:reconciled")
     if original is None or claim is None or claim[1] != "reconciliation":
-        return False
+        return Effect.UNKNOWN
     probe_id = claim[2].get("probe_event_id")
-    if claim[2].get("effect") != Effect.COMPLETED or not isinstance(probe_id, str):
-        return False
+    effect = claim[2].get("effect")
+    if effect not in (Effect.COMPLETED, Effect.ABSENT) or not isinstance(probe_id, str):
+        return Effect.UNKNOWN
     probe = events.get(f"{probe_id.removesuffix(':finish')}:start")
     finish = events.get(probe_id)
     if probe is None or finish is None:
-        return False
-    return (
+        return Effect.UNKNOWN
+    valid = (
         original[1] == probe[1] == "tool_start"
         and finish[1] == "tool_finish"
         and finish[2].get("outcome") == Outcome.RETURNED
@@ -60,3 +61,8 @@ def confirmed_completion(browser: BrowserCalls, action: str) -> bool:
         and probe[2].get("read_only") is True
         and all(probe[2].get(key) == original[2].get(key) for key in ("step", "context", "tab"))
     )
+    return Effect(effect) if valid else Effect.UNKNOWN
+
+
+def confirmed_completion(browser: BrowserCalls, action: str) -> bool:
+    return confirmed_effect(browser, action) is Effect.COMPLETED

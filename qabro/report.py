@@ -29,6 +29,11 @@ def report_run(journal: Journal, run: str) -> dict:
             "verdict": verdict,
             "cause": finish.get("cause", "product" if interrupted_mismatch else "unknown"),
             "checkpoints": checkpoints,
+            "diagnostics": [
+                {"kind": kind, **payload} for _, _, kind, payload in events
+                if kind in {"ambiguous_target", "environment_blocked", "resume_document_check",
+                            "unresolved_effect", "effect_absent", "reconciliation"}
+            ],
         })
 
     if len(revisions) > 1:

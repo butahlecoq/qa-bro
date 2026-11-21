@@ -154,6 +154,11 @@ class RecoveryTests(unittest.TestCase):
             verify_resume=fresh_document,
         )
         self.assertEqual(result.verdict, Verdict.INCONCLUSIVE)
+        from qabro.report import report_run
+
+        diagnostics = report_run(browser.journal, "run")["attempts"][0]["diagnostics"]
+        self.assertIn("effect_absent", [item["kind"] for item in diagnostics])
+        self.assertNotIn("unresolved_effect", [item["kind"] for item in diagnostics])
 
     def test_resume_stops_when_fresh_observation_does_not_confirm_document(self):
         from time import monotonic_ns

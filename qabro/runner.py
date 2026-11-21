@@ -12,7 +12,7 @@ from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Cause, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
-from qabro.recovery import confirmed_completion
+from qabro.recovery import Effect, confirmed_effect
 
 
 class AmbiguousTarget(Exception):
@@ -259,8 +259,10 @@ def run_scenario(
             if not succeeded:
                 if recover is not None and action_id in dict(journal.actions_to_reconcile(attempt_id)):
                     recover(action_id, step)
-                if not confirmed_completion(browser, action_id):
-                    journal.append(attempt_id, f"{action_id}:uncertain", "unresolved_effect", {
+                effect = confirmed_effect(browser, action_id)
+                if effect is not Effect.COMPLETED:
+                    kind = "effect_absent" if effect is Effect.ABSENT else "unresolved_effect"
+                    journal.append(attempt_id, f"{action_id}:{effect}", kind, {
                         "step": step.id, "action_event_id": f"{action_id}:start",
                     })
                     break
