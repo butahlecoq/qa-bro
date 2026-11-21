@@ -1,6 +1,12 @@
 """Gate skill capabilities when the browser tool contract changes."""
 
+import json
 from collections.abc import Callable
+from dataclasses import asdict
+from hashlib import sha256
+
+from qabro.catalog import Catalog, Scope, SkillRef
+from qabro.jobs import JobQueue
 
 
 def verified_capabilities(
@@ -30,3 +36,18 @@ def _tools_by_name(schema: dict) -> dict[str, dict]:
             key: definition.get(key) for key in ("inputSchema", "outputSchema")
         }
     return tools
+
+
+def propose_transfer(
+    catalog: Catalog, queue: JobQueue, run: str, skill: SkillRef, target: Scope,
+) -> str:
+    """Record a scope hypothesis for independent validation."""
+    source = catalog.confirmed_scope(run, skill)
+    if source is None:
+        raise ValueError("Transfer requires a skill revision pinned to this run")
+    if source == target:
+        raise ValueError("Target scope is already confirmed for this revision")
+    payload = {"skill": asdict(skill), "source": asdict(source), "target": asdict(target)}
+    job_id = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    queue.enqueue(job_id, "validate_transfer", payload)
+    return job_id

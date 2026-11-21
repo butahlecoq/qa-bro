@@ -153,3 +153,15 @@ class Catalog:
                 (run, ref.id, ref.revision),
             ).fetchone()
             return row[0] if row else None
+
+    def confirmed_scope(self, run: str, ref: SkillRef) -> Scope | None:
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute(
+                """
+                SELECT r.platform, r.component, r.context, r.role
+                FROM skill_revisions r JOIN pinned_skills p ON p.row_id=r.row_id
+                WHERE p.run_id=? AND r.id=? AND r.revision=?
+                """,
+                (run, ref.id, ref.revision),
+            ).fetchone()
+            return Scope(*row) if row else None
