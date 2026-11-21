@@ -1,6 +1,6 @@
 """Compare matched held-out QA runs against known verdicts."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from math import ceil
 from statistics import median
@@ -27,6 +27,26 @@ class Case:
 
 
 @dataclass(frozen=True)
+class Usage:
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    browser_calls: int = 0
+    browser_ns: int = 0
+
+    def __post_init__(self):
+        if any(type(value) is not int or value < 0 for value in asdict(self).values()):
+            raise ValueError("Pilot usage counters must be nonnegative integers")
+
+
+def _total_usage(samples: list[Usage]) -> Usage:
+    return Usage(**{
+        field.name: sum(getattr(sample, field.name) for sample in samples)
+        for field in fields(Usage)
+    })
+
+
+@dataclass(frozen=True)
 class Trial:
     case: Case
     mode: Mode
@@ -34,12 +54,15 @@ class Trial:
     verdict: Verdict
     elapsed_ns: int
     worker_tokens: int
+    usage: Usage = Usage()
 
 
 @dataclass(frozen=True)
 class LearningCost:
     explorer_tokens: int = 0
     validation_tokens: int = 0
+    explorer_usage: Usage = Usage()
+    validation_usage: Usage = Usage()
 
 
 def frozen_catalog_report(
@@ -68,6 +91,8 @@ def frozen_catalog_report(
         latency = sorted(trial.elapsed_ns for trial in samples)
         cost = learning.get(mode, LearningCost())
         worker = sum(trial.worker_tokens for trial in samples)
+        worker_usage = _total_usage([trial.usage for trial in samples])
+        total_usage = _total_usage([worker_usage, cost.explorer_usage, cost.validation_usage])
         defects = [trial for trial in samples if trial.case.expected is Verdict.FAIL]
         report[mode] = {
             "trials": len(samples),
@@ -81,6 +106,12 @@ def frozen_catalog_report(
             "detected_defects": sum(trial.verdict is Verdict.FAIL for trial in defects),
             "p50_ns": median(latency),
             "p95_ns": latency[ceil(.95 * len(latency)) - 1],
+            "usage": {
+                "worker": asdict(worker_usage),
+                "explorer": asdict(cost.explorer_usage),
+                "validation": asdict(cost.validation_usage),
+                "total": asdict(total_usage),
+            },
             "worker_tokens": worker,
             "explorer_tokens": cost.explorer_tokens,
             "validation_tokens": cost.validation_tokens,
@@ -196,10 +227,12 @@ def online_learning_report(
     rows = []
     seen = set()
     explorer_tokens = validation_tokens = worker_tokens = 0
+    costs = [final_learning]
     for attempt in attempts:
         if attempt.attempt_id in seen:
             raise ValueError(f"Duplicate online attempt: {attempt.attempt_id}")
         seen.add(attempt.attempt_id)
+        costs.append(attempt.learning_since_previous)
         explorer_tokens += attempt.learning_since_previous.explorer_tokens
         validation_tokens += attempt.learning_since_previous.validation_tokens
         worker_tokens += attempt.trial.worker_tokens
@@ -215,8 +248,17 @@ def online_learning_report(
 
     explorer_tokens += final_learning.explorer_tokens
     validation_tokens += final_learning.validation_tokens
+    worker_usage = _total_usage([attempt.trial.usage for attempt in attempts])
+    explorer_usage = _total_usage([cost.explorer_usage for cost in costs])
+    validation_usage = _total_usage([cost.validation_usage for cost in costs])
     return {
         "attempts": rows,
+        "usage": {
+            "worker": asdict(worker_usage),
+            "explorer": asdict(explorer_usage),
+            "validation": asdict(validation_usage),
+            "total": asdict(_total_usage([worker_usage, explorer_usage, validation_usage])),
+        },
         "worker_tokens": worker_tokens,
         "explorer_tokens": explorer_tokens,
         "validation_tokens": validation_tokens,

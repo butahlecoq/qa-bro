@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 
 from qabro.contract import Verdict
-from qabro.pilot import Case, LearningCost, Mode, Trial, frozen_catalog_report
+from qabro.pilot import Case, LearningCost, Mode, Trial, Usage, frozen_catalog_report
 
 
 class PilotTests(unittest.TestCase):
@@ -10,11 +10,17 @@ class PilotTests(unittest.TestCase):
         clean = Case("clean", "create", Verdict.PASS)
         defect = Case("defect", "create", Verdict.FAIL)
         trials = [
-            Trial(case, mode, "same model and budget", case.expected, 12, 100)
+            Trial(case, mode, "same model and budget", case.expected, 12, 100, Usage(2, 70, 30, 3, 9))
             for mode in Mode for case in (clean, defect)
         ]
         trials[-1] = replace(trials[-1], verdict=Verdict.PASS, elapsed_ns=18)
-        report = frozen_catalog_report(trials, frozenset({"edit"}), {Mode.HYBRID: LearningCost(10, 20)})
+        report = frozen_catalog_report(trials, frozenset({"edit"}), {
+            Mode.HYBRID: LearningCost(10, 20, Usage(1, 8, 2, 1, 3), Usage(2, 16, 4, 5, 12)),
+        })
+        self.assertEqual(report[Mode.HYBRID]["usage"]["total"], {
+            "model_calls": 7, "input_tokens": 164, "output_tokens": 66,
+            "browser_calls": 12, "browser_ns": 33,
+        })
         self.assertEqual(report[Mode.HYBRID]["false_pass"], 1)
         self.assertEqual(report[Mode.HYBRID]["detected_defects"], 0)
         self.assertEqual(report[Mode.HYBRID]["p95_ns"], 18)
