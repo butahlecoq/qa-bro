@@ -23,6 +23,11 @@ class Journal:
                     run_id TEXT NOT NULL,
                     worker_id TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS attempt_restarts (
+                    attempt_id TEXT PRIMARY KEY REFERENCES attempts(id),
+                    previous_id TEXT NOT NULL REFERENCES attempts(id),
+                    setup_artifact_id TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS finished_attempts (
                     attempt_id TEXT PRIMARY KEY REFERENCES attempts(id),
                     finished_ns INTEGER NOT NULL,
@@ -58,9 +63,21 @@ class Journal:
         db.execute("PRAGMA foreign_keys=ON")
         return db
 
-    def start(self, attempt: str, run: str, worker: str) -> None:
+    def start(
+        self, attempt: str, run: str, worker: str, *,
+        restart_of: str | None = None, setup_artifact_id: str | None = None,
+    ) -> None:
+        if restart_of == attempt or (restart_of is None) != (setup_artifact_id is None):
+            raise ValueError("A restart requires a previous attempt and setup evidence")
+        if setup_artifact_id == "":
+            raise ValueError("Setup evidence must have a reference")
         with closing(self._connect()) as db, db:
-            db.execute(
+            db.execute("BEGIN IMMEDIATE")
+            if restart_of is not None and db.execute(
+                "SELECT run_id FROM attempts WHERE id=?", (restart_of,),
+            ).fetchone() != (run,):
+                raise ValueError("Restart must refer to a previous attempt in the same run")
+            inserted = db.execute(
                 "INSERT INTO attempts VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
                 (attempt, run, worker),
             )
@@ -69,6 +86,23 @@ class Journal:
             ).fetchone()
             if owner != (run, worker):
                 raise ValueError("Attempt already belongs to a different run or worker")
+
+            if inserted.rowcount and restart_of is not None:
+                db.execute("INSERT INTO attempt_restarts VALUES (?, ?, ?)",
+                           (attempt, restart_of, setup_artifact_id))
+            stored = db.execute(
+                "SELECT previous_id, setup_artifact_id FROM attempt_restarts WHERE attempt_id=?", (attempt,),
+            ).fetchone()
+            expected = (restart_of, setup_artifact_id) if restart_of is not None else None
+            if stored != expected:
+                raise ValueError("Attempt already has different restart metadata")
+
+    def restart_metadata(self, attempt: str) -> dict:
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT previous_id, setup_artifact_id FROM attempt_restarts WHERE attempt_id=?", (attempt,),
+            ).fetchone()
+        return {"restart_of": row[0], "setup_artifact_id": row[1]} if row else {}
 
     def append(
         self, attempt: str, event: str, kind: str, payload: dict, *,

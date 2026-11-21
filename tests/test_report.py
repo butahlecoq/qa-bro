@@ -17,7 +17,8 @@ class ReportTests(unittest.TestCase):
         journal = Journal(path)
         scenario = Scenario("Save", (Step("save", "Save", (Checkpoint("saved", "Saved"),)),))
         for attempt, matches in (("initial", False), ("retry", True)):
-            journal.start(attempt, "run", "worker")
+            restart = {"restart_of": "initial", "setup_artifact_id": "reset-proof"} if matches else {}
+            journal.start(attempt, "run", "worker", **restart)
             journal.claim_tab("shared", attempt, attempt)
             browser = BrowserCalls(journal, attempt, "shared", attempt,
                                    lambda *_: {"content": [{"type": "text", "text": "ok"}]},
@@ -29,6 +30,8 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report["flaky_or_recovered_after_failure"])
         self.assertEqual([row["verdict"] for row in report["attempts"]], [Verdict.FAIL, Verdict.PASS])
         self.assertEqual(report["attempts"][0]["checkpoints"][0]["artifact_id"], "snapshot-initial")
+        self.assertEqual(report["attempts"][1]["restart_of"], "initial")
+        self.assertEqual(report["attempts"][1]["setup_artifact_id"], "reset-proof")
 
         for attempt in ("initial", "retry"):
             journal.release_tab("shared", attempt, attempt)

@@ -26,6 +26,7 @@ def report_run(journal: Journal, run: str) -> dict:
         failed |= verdict is Verdict.FAIL
         attempts.append({
             "id": attempt_id,
+            **journal.restart_metadata(attempt_id),
             "verdict": verdict,
             "cause": finish.get("cause", "product" if interrupted_mismatch else "unknown"),
             "checkpoints": checkpoints,
