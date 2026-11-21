@@ -69,7 +69,7 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
         )
         skills = RunSkills(catalog, attempt, scope, capabilities)
         recipe_options = {
-            "choose": lambda step: skills.select_recipe(step, lambda _, refs: refs[0]),
+            "choose": lambda step: skills.select_recipe(step, lambda _, refs: ref if ref in refs else None),
             "applicable": lambda _: True,
             "bindings": bindings,
         }

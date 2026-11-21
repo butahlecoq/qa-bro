@@ -7,8 +7,10 @@ from uuid import uuid4
 
 from qabro.baseline import run_fixture
 from qabro.browse_transport import BrowseTransport
+from qabro.catalog import Catalog, SkillRef
 from qabro.contract import Verdict
 from qabro.journal import Journal
+from qabro.validation import DefectTrial, _defect_evidence
 
 
 @unittest.skipUnless(os.environ.get("QABRO_FIXTURE_URL"), "Requires the live browser fixture")
@@ -22,6 +24,7 @@ class LiveReplayTests(unittest.TestCase):
         for suffix, expected in (("", Verdict.PASS), ("?wrong-category", Verdict.FAIL)):
             with self.subTest(verdict=expected):
                 traces = []
+                results = []
                 for replay in (False, True):
                     tab = f"replay-{uuid4().hex[:12]}"
                     with BrowseTransport(executable) as live:
@@ -42,4 +45,14 @@ class LiveReplayTests(unittest.TestCase):
                         if kind in {"tool_start", "checkpoint"}
                     ]
                     traces.append(trace)
+                    results.append(result)
                 self.assertEqual(traces[0], traces[1])
+                if expected is Verdict.FAIL:
+                    plain, replay = (result["attempt"] for result in results)
+                    ref = SkillRef(f"fixture-fill:{replay}", "1", "Name date")
+                    recipe = Catalog(database).load_recipe(replay, ref)
+                    self.assertIsNotNone(recipe)
+                    references = _defect_evidence(Journal(database), DefectTrial(plain, replay), recipe)
+                    self.assertEqual(references, {
+                        result["checkpoints"][0]["artifact_id"] for result in results
+                    })
