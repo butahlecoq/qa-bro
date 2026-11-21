@@ -11,6 +11,7 @@ from qabro.budget import BudgetExhausted
 from qabro.browser import BrowserCalls, Outcome
 from qabro.contract import Attempt, Checkpoint, Observation, Scenario, Step
 from qabro.evidence import CheckWindow, Evidence
+from qabro.recovery import confirmed_completion
 
 
 @dataclass(frozen=True)
@@ -131,12 +132,7 @@ def run_scenario(
                     break
                 if saved.get(f"{action_id}:reconciled", {}).get("effect") != "completed":
                     recover(action_id, step)
-                recovered = any(
-                    event == f"{action_id}:reconciled" and kind == "reconciliation"
-                    and payload.get("effect") == "completed" and payload.get("probe_event_id")
-                    for _, event, kind, payload in journal.events(attempt_id)
-                )
-                if not recovered:
+                if not confirmed_completion(browser, action_id):
                     break
             completed.append(step.id)
             for checkpoint in step.checkpoints:

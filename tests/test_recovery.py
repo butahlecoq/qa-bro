@@ -106,3 +106,16 @@ class RecoveryTests(unittest.TestCase):
         attempt = run_scenario(scenario, reopened, resolve, lambda *_: None, recover=recover, resume=True)
         self.assertEqual(calls, ["submit", "snapshot", "close"])
         self.assertEqual(attempt.verdict, Verdict.PASS)
+
+    def test_missing_probe_cannot_confirm_completion(self):
+        from qabro.recovery import confirmed_completion
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("attempt", "run", "worker")
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", lambda *_: {}, lambda value: value)
+        journal.append("attempt", "save:start", "tool_start", {"step": "save"})
+        journal.append("attempt", "save:reconciled", "reconciliation", {
+            "effect": "completed", "probe_event_id": "missing:finish",
+        })
+        self.assertFalse(confirmed_completion(browser, "save"))

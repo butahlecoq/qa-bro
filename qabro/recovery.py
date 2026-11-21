@@ -35,3 +35,28 @@ def reconcile(
             "effect": effect, "probe_event_id": f"{probe_id}:finish",
         })
     return effect
+
+
+def confirmed_completion(browser: BrowserCalls, action: str) -> bool:
+    """Verify that the completion claim links to a successful, later read-only probe."""
+    events = {event: (sequence, kind, data) for sequence, event, kind, data
+              in browser.journal.events(browser.attempt)}
+    original = events.get(f"{action}:start")
+    claim = events.get(f"{action}:reconciled")
+    if original is None or claim is None or claim[1] != "reconciliation":
+        return False
+    probe_id = claim[2].get("probe_event_id")
+    if claim[2].get("effect") != Effect.COMPLETED or not isinstance(probe_id, str):
+        return False
+    probe = events.get(f"{probe_id.removesuffix(':finish')}:start")
+    finish = events.get(probe_id)
+    if probe is None or finish is None:
+        return False
+    return (
+        original[1] == probe[1] == "tool_start"
+        and finish[1] == "tool_finish"
+        and finish[2].get("outcome") == Outcome.RETURNED
+        and original[0] < probe[0] < finish[0] < claim[0]
+        and probe[2].get("read_only") is True
+        and all(probe[2].get(key) == original[2].get(key) for key in ("step", "context", "tab"))
+    )
