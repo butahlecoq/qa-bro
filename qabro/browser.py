@@ -100,3 +100,32 @@ class BrowserCalls:
             payload["artifact_id"] = artifact_id
         self.journal.append(self.attempt, f"{action}:finish", "tool_finish", payload)
         return artifact_id
+
+
+def claim_child_tabs(browser: BrowserCalls, probe: str, step: str) -> tuple[str, ...]:
+    """Lease observed browse popups that directly belong to the current tab."""
+    result = browser.invoke(probe, step, "tabs", {"action": "list"}, read_only=True)
+    if result.outcome is not Outcome.RETURNED:
+        return ()
+    try:
+        content = result.raw["content"]
+        if len(content) != 1 or content[0]["type"] != "text":
+            return ()
+        tabs = json.loads(content[0]["text"])["tabs"]
+        parent, = (
+            entry for entry in tabs
+            if str(entry["tab"]) == browser.tab or entry.get("id") == browser.tab
+        )
+        if type(parent["tab"]) is not int:
+            return ()
+        children = tuple(
+            str(entry["tab"]) for entry in tabs
+            if entry.get("opener") == parent["tab"] and type(entry["tab"]) is int
+            and entry.get("lent") is False and entry.get("browser") == parent.get("browser")
+        )
+    except (KeyError, TypeError, ValueError):
+        return ()
+    return tuple(
+        child for child in children
+        if browser.journal.claim_tab(browser.context, child, browser.attempt, parent=browser.tab)
+    )

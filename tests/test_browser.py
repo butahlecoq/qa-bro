@@ -104,3 +104,25 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(journal.claim_resources("explorer", ("record:42",)))
         self.assertIs(browser.invoke("update", "probe", "click", {}).outcome, Outcome.RETURNED)
         self.assertEqual(dispatched, [("explorer-tab", "click")])
+
+    def test_claim_child_tabs_uses_observed_opener_and_ignores_other_tabs(self):
+        import json
+
+        from qabro.browser import claim_child_tabs
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("worker", "run", "worker")
+        journal.start("other", "run", "other")
+        journal.claim_tab("shared", "parent", "worker")
+        tabs = [
+            {"tab": 1, "id": "parent", "browser": "chromium"},
+            {"tab": 2, "id": "popup", "opener": 1, "lent": False, "browser": "chromium"},
+            {"tab": 3, "opener": 9, "lent": False, "browser": "chromium"},
+            {"tab": 4, "opener": 1, "lent": True, "browser": "chromium"},
+        ]
+        raw = {"content": [{"type": "text", "text": json.dumps({"tabs": tabs})}]}
+        browser = BrowserCalls(journal, "worker", "shared", "parent", lambda *_: raw, lambda value: value)
+        self.assertEqual(claim_child_tabs(browser, "tabs", "open"), ("2",))
+        self.assertFalse(Journal(path).claim_tab("shared", "2", "other"))
+        self.assertTrue(journal.claim_tab("shared", "3", "other"))
