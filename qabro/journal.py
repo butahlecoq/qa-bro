@@ -222,8 +222,19 @@ class Journal:
             (context, tab, attempt),
         )
 
-    def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
+    def claim_tab(
+        self, context: str, tab: str, attempt: str, *, parent: str | None = None,
+    ) -> bool:
+        """Reserve an observed child only for the owner of its parent tab."""
         with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            if parent is not None:
+                owner = db.execute(
+                    "SELECT attempt_id FROM tab_leases WHERE context_id=? AND tab_id=?",
+                    (context, parent),
+                ).fetchone()
+                if owner != (attempt,):
+                    return False
             db.execute(
                 "INSERT INTO tab_leases VALUES (?, ?, ?) "
                 "ON CONFLICT(context_id, tab_id) DO NOTHING",

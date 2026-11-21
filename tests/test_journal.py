@@ -68,3 +68,12 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(self.journal.events("b"), [])
         with self.assertRaisesRegex(ValueError, "pruned"):
             self.journal.append("a", "scenario:start", "scenario_start", {})
+
+    def test_child_tab_can_only_be_claimed_via_owned_parent(self):
+        self.assertTrue(self.journal.claim_tab("shared", "parent-a", "a"))
+        self.assertTrue(self.journal.claim_tab("shared", "parent-b", "b"))
+        self.assertFalse(self.journal.claim_tab("shared", "child", "b", parent="parent-a"))
+        self.assertTrue(self.journal.claim_tab("shared", "child", "a", parent="parent-a"))
+        reopened = Journal(self.path)
+        self.assertFalse(reopened.claim_tab("shared", "child", "b", parent="parent-b"))
+        self.assertTrue(reopened.claim_tab("shared", "child", "a", parent="parent-a"))
