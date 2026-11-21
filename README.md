@@ -59,3 +59,36 @@ On the verified run the agent reported `PASS` with the exact expected row. The J
 To exercise the controlled defect, append `?wrong-category` to the fixture URL in the prompt and choose a different tab name. Keep the expected row unchanged. In the verified run, the browser returned `Agent sample | 2027-01-20 | wrong` after reporting successful creation. The agent reported `FAIL`. The trace recorded 11 completed model steps, 10 OpenCode tool dispatches, and 29.4 seconds between the first and last events.
 
 For the corporate Pi smoke test, use the existing authenticated harness with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage for one existing scenario. Verify that the references resolve locally and that the stored trace omits authentication material.
+
+### Skill lookup from an existing agent
+
+The local skills MCP server pins the catalog when it starts. The worker supplies a unique run ID, the observed UI scope, and its verified browser capabilities. The agent calls `find_skills` for summaries and `read_hint` with the ID and revision of a result it chooses. An empty result lets the agent continue its ordinary workflow.
+
+Run this from the repository root to seed a hint for the local fixture and connect it to a disposable OpenCode project.
+
+```sh
+project_root="$PWD"
+agent_workspace="$(mktemp -d)"
+git -C "$agent_workspace" init -q
+python - "$agent_workspace/catalog.sqlite" <<'PY'
+from pathlib import Path
+from sys import argv
+
+from qabro.catalog import Catalog, Scope, SkillRef
+
+Catalog(Path(argv[1])).seed_verified_hint(
+    SkillRef("fixture-date", "1", "Choose date"),
+    Scope("fixture", "form", "requirements", "editor"),
+    "Use the date field for the due date.",
+)
+PY
+(
+  cd "$agent_workspace"
+  opencode mcp add qa-skills --env "PYTHONPATH=$project_root" -- \
+    "$(command -v python)" -m qabro.skill_mcp "$agent_workspace/catalog.sqlite" \
+    smoke fixture form requirements editor
+  opencode --standalone run --archived --auto --format json \
+    -m opencode/deepseek-v4.1-flash-free \
+    'Find skills for date with qa-skills, read the offered hint, and return its exact text.'
+)
+```
