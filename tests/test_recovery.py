@@ -154,3 +154,38 @@ class RecoveryTests(unittest.TestCase):
             verify_resume=fresh_document,
         )
         self.assertEqual(result.verdict, Verdict.INCONCLUSIVE)
+
+    def test_resume_stops_when_fresh_observation_does_not_confirm_document(self):
+        from time import monotonic_ns
+
+        from qabro.contract import Scenario, Step
+        from qabro.evidence import Evidence
+        from qabro.runner import Action, EnvironmentBlocked, run_scenario
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        scenario = Scenario("Open and save", (Step("open", "Open"), Step("save", "Save")))
+
+        def transport(tab, tool, arguments):
+            if tool == "navigate":
+                return {"content": [{"type": "text", "text": "opened"}]}
+            self.fail("No mutation may be sent after the document changes")
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+
+        def resolve(step):
+            if step.id == "save":
+                raise KeyboardInterrupt()
+            return Action("navigate", {})
+
+        with self.assertRaises(KeyboardInterrupt):
+            run_scenario(scenario, browser, resolve, lambda *_: None)
+        with self.assertRaises(EnvironmentBlocked):
+            run_scenario(
+                scenario, browser, lambda _: Action("click", {}), lambda *_: None, resume=True,
+                verify_resume=lambda _: Evidence(monotonic_ns(), "changed-document", False),
+            )
+        self.assertEqual(journal.events("attempt")[-1][3], {
+            "context": "shared", "tab": "tab", "artifact_id": "changed-document", "verified": False,
+        })
