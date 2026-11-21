@@ -35,6 +35,6 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
         pruned = report_run(Journal(path), "run")
         self.assertEqual(pruned["pruned_attempt_ids"], ["initial", "retry"])
-        self.assertEqual(pruned["verdict"], Verdict.INCONCLUSIVE)
+        self.assertEqual(pruned["verdict"], Verdict.FAIL)
         self.assertEqual(pruned["attempts"], [])
         self.assertEqual(report_run(journal, "unknown")["pruned_attempt_ids"], [])

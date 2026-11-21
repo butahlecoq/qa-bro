@@ -28,6 +28,10 @@ class Journal:
                     finished_ns INTEGER NOT NULL,
                     pruned INTEGER NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS pruned_verdicts (
+                    attempt_id TEXT PRIMARY KEY REFERENCES attempts(id),
+                    verdict TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS events (
                     attempt_id TEXT NOT NULL REFERENCES attempts(id),
                     sequence INTEGER NOT NULL,
@@ -145,6 +149,12 @@ class Journal:
                         "SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM events WHERE attempt_id=?",
                         (attempt,),
                     ).fetchone()[0]
+                    db.execute("""
+                        INSERT INTO pruned_verdicts
+                        SELECT attempt_id, json_extract(payload, '$.verdict') FROM events
+                        WHERE attempt_id=? AND event_id='scenario:finish'
+                          AND json_type(payload, '$.verdict')='text'
+                    """, (attempt,))
                     db.execute("DELETE FROM events WHERE attempt_id=?", (attempt,))
                     db.execute("UPDATE finished_attempts SET pruned=1 WHERE attempt_id=?", (attempt,))
                     total -= size
@@ -192,6 +202,13 @@ class Journal:
                 (run,),
             )
             return [attempt for (attempt,) in rows]
+
+    def has_pruned_failure(self, run: str) -> bool:
+        with closing(self._connect()) as db:
+            return db.execute("""
+                SELECT 1 FROM pruned_verdicts p JOIN attempts a ON a.id=p.attempt_id
+                WHERE a.run_id=? AND p.verdict='FAIL' LIMIT 1
+            """, (run,)).fetchone() is not None
 
     def events_of_kind(self, kind: str) -> list[tuple[str, dict]]:
         with closing(self._connect()) as db:
