@@ -11,6 +11,10 @@ from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
 
 
+class ProbeActionDenied(PermissionError):
+    """The host did not authorize this action on the probe data."""
+
+
 def run_next_probe(
     queue: JobQueue,
     journal: Journal,
@@ -23,6 +27,7 @@ def run_next_probe(
     clock: Callable[[], int] = time_ns,
     recover: Callable[[Job, BrowserCalls], dict | None] | None = None,
     prepare_tab: Callable[[str], None] | None = None,
+    allow_action: Callable[[Job, str, dict], bool] | None = None,
 ) -> bool:
     """Use a stable attempt and dedicated tab for a host-configured probe."""
     if queue.path.resolve() != journal.path.resolve():
@@ -46,10 +51,19 @@ def run_next_probe(
         journal.release_tab(context, tab, attempt)
         return False
 
+    def authorize_action(tool: str, arguments: dict) -> None:
+        if tool == "snapshot" and not arguments:
+            return
+        if tool in {"tabs", "execute", "eval", "settings"} or not (
+            allow_action and allow_action(job, tool, arguments)
+        ):
+            raise ProbeActionDenied("Action is outside the approved probe plan")
+
     browser = BrowserCalls(
         journal, attempt, context, tab, transport, redact, resources=tuple(resources),
         budget=Budget(browser_calls=20, model_calls=2, seconds=30),
         authorize=lambda db: queue.require_lease(db, job, clock()),
+        authorize_action=authorize_action,
     )
     previous = {event: payload for _, event, _, payload in journal.events(attempt)}
     result = previous.get("probe:result")
@@ -62,7 +76,10 @@ def run_next_probe(
             if prepare_tab is not None:
                 prepare_tab(tab)
             journal.append(attempt, "probe:started", "probe_started", {}, reserve=True)
-            result = execute(job, browser)
+            try:
+                result = execute(job, browser)
+            except ProbeActionDenied:
+                result = {"status": "blocked", "reason": "action_outside_probe_plan"}
         if result is None or journal.actions_to_reconcile(attempt):
             return False
         journal.append(attempt, "probe:result", "probe_result", result, authorize=browser.authorize)

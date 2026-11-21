@@ -57,6 +57,7 @@ class BrowserCalls:
         artifacts: ArtifactStore | None = None,
         resources: tuple[str, ...] = (),
         authorize: Callable[[sqlite3.Connection], None] | None = None,
+        authorize_action: Callable[[str, dict], None] | None = None,
     ):
         self.journal = journal
         self.attempt = attempt
@@ -68,10 +69,13 @@ class BrowserCalls:
         self.artifacts = artifacts
         self.resources = resources
         self.authorize = authorize
+        self.authorize_action = authorize_action
 
     def invoke(
         self, action: str, step: str, tool: str, arguments: dict, *, read_only: bool = False,
     ) -> ToolResult:
+        if self.authorize_action is not None:
+            self.authorize_action(tool, arguments)
         if self.budget is not None:
             self.budget.consume("browser")
         self.journal.append(

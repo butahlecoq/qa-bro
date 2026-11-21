@@ -26,7 +26,8 @@ class ProbeTests(unittest.TestCase):
             return {"outcome": result.outcome}
 
         args = {"context": "shared", "transport": transport,
-                "redact": lambda value: value, "execute": execute}
+                "redact": lambda value: value, "execute": execute,
+                "allow_action": lambda job, tool, arguments: tool == "click"}
         self.assertFalse(run_next_probe(queue, journal, **args, foreground_busy=lambda: True, clock=lambda: 0))
         self.assertFalse(run_next_probe(queue, journal, **args, foreground_busy=lambda: False, clock=lambda: 0))
         self.assertEqual(calls, [])
@@ -63,7 +64,8 @@ class ProbeTests(unittest.TestCase):
             return {"status": "completed"} if effect is Effect.COMPLETED else None
 
         args = {"context": "shared", "transport": transport, "foreground_busy": lambda: False,
-                "redact": lambda value: value, "execute": execute, "recover": recover}
+                "redact": lambda value: value, "execute": execute, "recover": recover,
+                "allow_action": lambda job, tool, arguments: tool == "click"}
         with self.assertRaises(TimeoutError):
             run_next_probe(queue, journal, **args, clock=lambda: 0)
         self.assertTrue(run_next_probe(JobQueue(path), Journal(path), **args, clock=lambda: 60_000_000_000))
@@ -88,6 +90,7 @@ class ProbeTests(unittest.TestCase):
                 queue, journal, foreground_busy=lambda: False, context="shared",
                 transport=lambda *_: self.fail("Stale call reached browser"),
                 redact=lambda value: value, execute=execute, clock=lambda: now,
+                allow_action=lambda *_: True,
             )
 
     def test_only_routine_confirmation_calls_the_confirm_action(self):
@@ -117,3 +120,23 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(result["status"], status)
         self.assertEqual(confirmations, [True])
         self.assertEqual(len(journal.events("probe")), len(cases))
+
+    def test_probe_cannot_dispatch_to_an_unapproved_record(self):
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, queue = Journal(path), JobQueue(path)
+        queue.enqueue("scope", "probe", {"resources": ["record:probe"]})
+
+        def execute(job, browser):
+            browser.invoke("outside", "probe", "click", {"selector": "#worker-record"}, read_only=True)
+            self.fail("Unapproved mutation should stop the probe")
+
+        self.assertTrue(run_next_probe(
+            queue, journal, foreground_busy=lambda: False, context="shared",
+            transport=lambda *_: self.fail("Unapproved command reached the browser"),
+            redact=lambda value: value, execute=execute, clock=lambda: 1,
+            allow_action=lambda job, tool, args: tool == "click" and args["selector"] == "#probe-record",
+        ))
+        events = journal.events("probe:scope")
+        self.assertFalse(any(kind == "tool_start" for _, _, kind, _ in events))
+        result, = [payload for _, _, kind, payload in events if kind == "probe_result"]
+        self.assertEqual(result, {"status": "blocked", "reason": "action_outside_probe_plan"})
