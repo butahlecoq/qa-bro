@@ -196,3 +196,30 @@ class ExplorerTests(unittest.TestCase):
             journal.append(attempt, "scenario:finish", "scenario_finish", {"verdict": "PASS"})
         self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
         self.assertEqual(store.prune(before=100, max_bytes=0), 0)
+
+    def test_draft_keeps_source_evidence_until_validation_rejects_it(self):
+        from qabro.artifacts import ArtifactStore
+        from qabro.catalog import Catalog
+        from qabro.explorer import HintDraft, explore_recorded, record_episode, scan_experience
+        from qabro.journal import Journal
+        from qabro.validation import validate_next_hint
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        catalog, journal, store = Catalog(path), Journal(path), ArtifactStore(path)
+        scope = Scope("fixture", "select", "requirements", "editor")
+        for attempt in ("a", "b"):
+            journal.start(attempt, "run", "worker")
+            artifact = store.put(attempt.encode(), now=1)
+            journal.append(attempt, "read:finish", "tool_finish", {"artifact_id": artifact})
+            record_episode(journal, Episode(scope, "Investigate dropdown", attempt, artifact, 3))
+            journal.append(attempt, "scenario:finish", "scenario_finish", {"verdict": "PASS"})
+
+        scan_experience(journal, catalog.jobs)
+        self.assertTrue(explore_recorded(catalog, lambda *_: HintDraft(
+            "Find category", "Choose the category by label.", ("native",), False, 5, 0,
+        ), clock=lambda: 1))
+        self.assertGreater(journal.prune(before_ns=0, max_payload_bytes=0), 0)
+        self.assertEqual(store.prune(before=100, max_bytes=0), 2)
+        self.assertTrue(validate_next_hint(catalog, lambda _: (), clock=lambda: 2))
+        self.assertEqual(journal.prune(before_ns=0, max_payload_bytes=0), 0)
+        self.assertEqual(store.prune(before=100, max_bytes=0), 0)

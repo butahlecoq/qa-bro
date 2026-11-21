@@ -160,6 +160,12 @@ def explore_next(
     candidate = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     def enqueue_validation(db: sqlite3.Connection) -> None:
         queue.enqueue_in(db, candidate, "validate_hint", payload)
+        db.execute("""
+            INSERT OR IGNORE INTO artifact_pins
+            SELECT ?, artifact_id FROM artifact_pins WHERE owner=? AND EXISTS (
+                SELECT 1 FROM jobs WHERE id=? AND result IS NULL
+            )
+        """, (f"validate:{candidate}", f"explore:{job.id}", candidate))
         release(db)
 
     return queue.complete(

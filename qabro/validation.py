@@ -231,13 +231,28 @@ def _validate_job(
     accepted = accepted and all(outcomes == {True, False} for outcomes in branches.values())
     accepted = accepted and all(store.get(ref) is not None for ref in references)
 
-    def publish(db: Connection) -> None:
+    def finalize(db: Connection) -> None:
+        owner = f"validate:{job.id}"
+        if not accepted:
+            db.execute("DELETE FROM artifact_pins WHERE owner=?", (owner,))
+            return
+        skill_owner = f"{candidate.ref.id}:{candidate.ref.revision}"
+        db.execute("""
+            INSERT OR IGNORE INTO artifact_pins
+            SELECT ?, artifact_id FROM artifact_pins WHERE owner=?
+        """, (skill_owner, owner))
+        db.execute("DELETE FROM artifact_pins WHERE owner=?", (owner,))
         for reference in sorted(references):
             pinned = db.execute(
-                "INSERT INTO artifact_pins SELECT ?, id FROM artifacts WHERE id=?",
-                (f"{candidate.ref.id}:{candidate.ref.revision}", reference),
+                """
+                INSERT OR IGNORE INTO artifact_pins
+                SELECT ?, id FROM artifacts WHERE id=?
+                """,
+                (skill_owner, reference),
             )
-            if pinned.rowcount != 1:
+            if pinned.rowcount != 1 and db.execute(
+                "SELECT 1 FROM artifact_pins WHERE owner=? AND artifact_id=?", (skill_owner, reference),
+            ).fetchone() is None:
                 raise ValueError("Validation evidence expired before publication")
         catalog.publish_hint_in(
             db, candidate.ref, candidate.scope, candidate.hint,
@@ -247,5 +262,5 @@ def _validate_job(
     return catalog.jobs.complete(
         job, {"published": accepted, "sessions": [run.session_id for run in runs],
               "evidence": sorted(references)},
-        now_ns=clock(), finalize=publish if accepted else None,
+        now_ns=clock(), finalize=finalize,
     )
