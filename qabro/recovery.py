@@ -41,6 +41,10 @@ def confirmed_effect(browser: BrowserCalls, action: str) -> Effect:
     """Verify that the effect claim links to a successful, later read-only probe."""
     events = {event: (sequence, kind, data) for sequence, event, kind, data
               in browser.journal.events(browser.attempt)}
+    return effect_from_events(events, action)
+
+
+def effect_from_events(events: dict, action: str) -> Effect:
     original = events.get(f"{action}:start")
     claim = events.get(f"{action}:reconciled")
     if original is None or claim is None or claim[1] != "reconciliation":

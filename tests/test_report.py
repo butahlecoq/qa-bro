@@ -55,3 +55,36 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["verdict"], Verdict.FAIL)
         self.assertTrue(report["flaky_or_recovered_after_failure"])
         self.assertEqual(report["attempts"][0]["checkpoints"][0]["artifact_id"], "first-snapshot")
+
+    def test_recipe_progress_reports_an_unresolved_action_and_remaining_steps(self):
+        from datetime import UTC, datetime
+
+        from qabro.bindings import AttemptBindings
+        from qabro.browser import BrowserCalls
+        from qabro.runner import Recipe, RecipeStep, run_scenario
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "run.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("fixture", "tab", "attempt")
+        steps = (Step("name", "Fill name"), Step("save", "Save record"), Step("close", "Close form"))
+        recipe = Recipe("form", "1", tuple(
+            RecipeStep(step, "click", (("selector", f"#{step.id}"),)) for step in steps
+        ))
+
+        def transport(tab, tool, arguments):
+            if arguments["selector"] == "#save":
+                raise TimeoutError()
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        browser = BrowserCalls(journal, "attempt", "fixture", "tab", transport, lambda value: value)
+        run_scenario(
+            Scenario("Fill, save, and close.", steps), browser, lambda _: self.fail(), lambda *_: None,
+            choose=lambda _: recipe, applicable=lambda _: True,
+            bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)),
+        )
+        progress, = report_run(journal, "run")["attempts"][0]["recipes"]
+        self.assertEqual(progress["effect_status"], "unknown")
+        self.assertEqual(progress["stopped_at"], "save")
+        self.assertEqual([item["state"] for item in progress["operations"]],
+                         ["completed", "unknown", "not_dispatched"])
+        self.assertEqual(progress["operations"][0]["arguments"], {"selector": "#name"})
