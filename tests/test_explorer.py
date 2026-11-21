@@ -96,3 +96,36 @@ class ExplorerTests(unittest.TestCase):
         self.assertTrue(explore_next(queue, lambda _: draft, catalog=catalog, clock=lambda: 2))
         job = queue.claim("validate_hint", now_ns=2, lease_ns=2)
         self.assertEqual(job.payload["scope"], vars(other))
+
+    def test_synthesis_receives_only_artifacts_linked_to_the_source_attempt(self):
+        from qabro.artifacts import ArtifactStore
+        from qabro.catalog import Catalog
+        from qabro.explorer import HintDraft, explore_recorded
+        from qabro.journal import Journal
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        catalog, journal, store = Catalog(path), Journal(path), ArtifactStore(path)
+        scope = Scope("fixture", "select", "requirements", "editor")
+        first = store.put(b"first snapshot", now=1)
+        second = store.put(b"second snapshot", now=1)
+        for attempt, evidence in (("a", first), ("b", second)):
+            journal.start(attempt, "run", "worker")
+            journal.append(attempt, "read:finish", "tool_finish", {"artifact_id": evidence})
+        queue_exploration(catalog.jobs, [
+            Episode(scope, "select", "a", second, 3),
+            Episode(scope, "select", "b", first, 3),
+        ])
+        self.assertTrue(explore_recorded(catalog, lambda *_: self.fail("Unlinked artifacts"), clock=lambda: 1))
+        self.assertIsNone(catalog.jobs.claim("validate_hint", now_ns=1, lease_ns=10))
+
+        queue_exploration(catalog.jobs, [
+            Episode(scope, "select", "a", first, 3),
+            Episode(scope, "select", "b", second, 3),
+        ])
+
+        def synthesize(job, evidence):
+            self.assertEqual(evidence, (b"first snapshot", b"second snapshot"))
+            return HintDraft("Choose option", "Use the value", ("select",), False, 5, 0)
+
+        self.assertTrue(explore_recorded(catalog, synthesize, clock=lambda: 2))
+        self.assertIsNotNone(catalog.jobs.claim("validate_hint", now_ns=2, lease_ns=10))

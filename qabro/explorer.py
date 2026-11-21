@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from time import time_ns
 
+from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope
 from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
@@ -128,3 +129,30 @@ def explore_next(
         now_ns=clock(),
         finalize=lambda db: queue.enqueue_in(db, candidate, "validate_hint", payload),
     )
+
+
+def explore_recorded(
+    catalog: Catalog,
+    synthesize: Callable[[Job, tuple[bytes, ...]], HintDraft | None],
+    *,
+    clock: Callable[[], int] = time_ns,
+) -> bool:
+    """Supply synthesis with redacted artifacts linked to their source attempts."""
+    journal = Journal(catalog.path)
+    store = ArtifactStore(catalog.path)
+
+    def prepare(job: Job) -> HintDraft | None:
+        evidence = []
+        for source in job.payload["sources"]:
+            artifact_id = source["evidence_id"]
+            linked = any(
+                kind in {"tool_finish", "checkpoint"} and payload.get("artifact_id") == artifact_id
+                for _, _, kind, payload in journal.events(source["attempt_id"])
+            )
+            content = store.get(artifact_id) if linked else None
+            if content is None:
+                return None
+            evidence.append(content)
+        return synthesize(job, tuple(evidence))
+
+    return explore_next(catalog.jobs, prepare, clock=clock, catalog=catalog)
