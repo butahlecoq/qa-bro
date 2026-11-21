@@ -103,6 +103,12 @@ python -m qabro.retention /tmp/qabro-smoke.sqlite --age-days 30 --journal-bytes 
 
 The report counts stored payload bytes. SQLite file size also includes indexes, free pages, and database overhead. Active leases, unresolved effects, and pinned evidence can keep usage above the configured limits.
 
+## Learn a hint from recorded runs
+
+Attach `record_verified_steps` to the scenario runner with an operation label for the reusable behavior. Run `scan_experience` against the local journal and queue once multiple attempts have recorded the same costly operation in the same scope. Routine clicks can be excluded when recording episodes.
+
+Use `synthesize_next_hint` with the worker's configured text model callback. It reads the source artifacts, filters known run values and snapshot references, and asks for a hint with an excerpt from a recorded observation. The explorer records the token and browser costs against the job. A draft enters the validation queue with its source evidence and becomes discoverable only after independent validation.
+
 ## Compiled execution trial
 
 Plain browse dispatch remains the default. In a paired local Chromium trial, the single-call prototype preserved the ordered step outcomes and final form state on success and on a failed checkpoint. With a missing target after a successful fill, the form retained the first value on both backends. When the outer `execute` deadline expired during target resolution, the response omitted the completed step prefix. This prevents recovery from using the returned trace to locate the partial effect, so latency savings cannot qualify this prototype for activation.
