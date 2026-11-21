@@ -58,3 +58,40 @@ for (const [index, {{step, tool, args, expected}}] of plan.entries()) {{
 }}
 return {{events}};"""
     return {"code": code, "timeoutMs": timeout_ms}
+
+
+@dataclass(frozen=True)
+class InterruptedProgress:
+    outcomes: tuple[str, ...]
+    in_flight: int | None
+
+
+def interrupted_progress(result: dict, operation_count: int) -> InterruptedProgress | None:
+    """Read the observed prefix of an execute timeout without inferring an effect."""
+    if not result.get("isError"):
+        return None
+    content = result.get("content", ())
+    if not isinstance(content, list) or not content or not isinstance(content[0], dict):
+        return None
+    message = content[0].get("text")
+    if content[0].get("type") != "text" or not isinstance(message, str):
+        return None
+    header, separator, console = message.partition("\n\nConsole:\n")
+    if not separator or not any(line.startswith("Error: execute timed out") for line in header.splitlines()):
+        return None
+    outcomes = []
+    in_flight = None
+    for line in console.splitlines():
+        index = len(outcomes)
+        prefix = f"qa-bro: {index} "
+        if index >= operation_count or not line.startswith(prefix):
+            return None
+        status = line[len(prefix):]
+        if in_flight is None and status == "started":
+            in_flight = index
+        elif in_flight == index and status in {"returned", "matched", "mismatched", "unknown"}:
+            outcomes.append(status)
+            in_flight = None
+        else:
+            return None
+    return InterruptedProgress(tuple(outcomes), in_flight)

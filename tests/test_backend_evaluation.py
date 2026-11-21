@@ -40,3 +40,13 @@ class BackendEvaluationTests(unittest.TestCase):
         manifest["recipe_fingerprint"] = "unmeasured"
         with self.assertRaisesRegex(ValueError, "selected from the pilot"):
             evaluate_manifest(manifest)
+
+    def test_interrupted_progress_rejects_a_missing_or_out_of_order_marker(self):
+        from qabro.compiled_browser import interrupted_progress
+
+        for markers in ("qa-bro: 1 started", "qa-bro: 0 returned", "qa-bro: 0 started\nqa-bro: 1 returned"):
+            with self.subTest(markers=markers):
+                self.assertIsNone(interrupted_progress({
+                    "isError": True,
+                    "content": [{"type": "text", "text": f"Error: execute timed out\n\nConsole:\n{markers}"}],
+                }, 2))

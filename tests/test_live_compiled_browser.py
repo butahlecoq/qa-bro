@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from qabro.browse_transport import BrowseTransport
-from qabro.compiled_browser import Operation, compile_operations
+from qabro.compiled_browser import InterruptedProgress, Operation, compile_operations, interrupted_progress
 from qabro.runner import Action
 
 
@@ -71,13 +71,10 @@ class LiveCompiledBrowserTests(unittest.TestCase):
                             if backend == "compiled":
                                 result = browser(tab, "execute", compile_operations(operations, timeout_ms=5000))
                                 if result.get("isError"):
-                                    message = result["content"][0]["text"]
-                                    self.assertIn("execute timed out", message)
-                                    _, markers = message.split("\n\nConsole:\n", 1)
-                                    self.assertEqual(markers.splitlines(), [
-                                        "qa-bro: 0 started", "qa-bro: 0 returned",
-                                        "qa-bro: 1 started", "qa-bro: 1 returned", "qa-bro: 2 started",
-                                    ])
+                                    self.assertEqual(
+                                        interrupted_progress(result, len(operations)),
+                                        InterruptedProgress(("returned", "returned"), 2),
+                                    )
                                     traces[backend] = None
                                 else:
                                     _, payload = result["content"][0]["text"].split("\n\n", 1)
