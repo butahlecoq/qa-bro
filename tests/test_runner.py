@@ -247,3 +247,38 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(journal.events("attempt")[-1][3], {
             "cause": "environment", "verdict": "BLOCKED",
         })
+
+    def test_catalog_recipe_falls_back_when_its_precondition_fails(self):
+        from datetime import UTC, datetime
+
+        from qabro.bindings import AttemptBindings
+        from qabro.catalog import Catalog, Scope, SkillRef
+        from qabro.runner import Recipe, RecipeStep
+        from qabro.skills import RunSkills
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, catalog = Journal(path), Catalog(path)
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        step = Step("save", "Save requirements")
+        scope = Scope("fixture", "form", "requirements", "editor")
+        ref = SkillRef("save", "1", "Save requirements")
+        recipe = Recipe(ref.id, ref.revision, (RecipeStep(step, "recipe-click", ()),))
+        catalog.seed_verified_hint(ref, scope, "Save the form", recipe=recipe)
+        skills = RunSkills(catalog, "run", scope, frozenset())
+        called = []
+
+        def transport(tab, tool, arguments):
+            called.append(tool)
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        result = run_scenario(
+            Scenario(step.action, (step,)), browser, lambda _: Action("ordinary-click", {}),
+            lambda *_: None,
+            choose=lambda source: skills.select_recipe(source, lambda _, options: options[0]),
+            applicable=lambda selected: False,
+            bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)),
+        )
+        self.assertEqual(called, ["ordinary-click"])
+        self.assertEqual(result.verdict, Verdict.PASS)
