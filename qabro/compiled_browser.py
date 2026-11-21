@@ -37,12 +37,14 @@ def compile_operations(operations: tuple[Operation, ...], *, timeout_ms: int) ->
     encoded = json.dumps(plan, allow_nan=False)
     code = f"""const plan = JSON.parse({json.dumps(encoded)});
 const events = [];
-for (const {{step, tool, args, expected}} of plan) {{
+for (const [index, {{step, tool, args, expected}}] of plan.entries()) {{
+  console.log("qa-bro: " + index + " started");
   let evidence;
   try {{
     evidence = await browse[tool](args);
   }} catch (error) {{
     events.push({{step, tool, outcome: "unknown", evidence: String(error)}});
+    console.log("qa-bro: " + index + " unknown");
     break;
   }}
   let outcome = "returned";
@@ -51,6 +53,7 @@ for (const {{step, tool, args, expected}} of plan) {{
       : evidence.includes(expected) ? "matched" : "mismatched";
   }}
   events.push({{step, tool, outcome, evidence: evidence ?? null}});
+  console.log("qa-bro: " + index + " " + outcome);
   if (outcome === "unknown" || outcome === "mismatched") break;
 }}
 return {{events}};"""

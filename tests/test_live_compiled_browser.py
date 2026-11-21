@@ -71,7 +71,13 @@ class LiveCompiledBrowserTests(unittest.TestCase):
                             if backend == "compiled":
                                 result = browser(tab, "execute", compile_operations(operations, timeout_ms=5000))
                                 if result.get("isError"):
-                                    self.assertIn("execute timed out", result["content"][0]["text"])
+                                    message = result["content"][0]["text"]
+                                    self.assertIn("execute timed out", message)
+                                    _, markers = message.split("\n\nConsole:\n", 1)
+                                    self.assertEqual(markers.splitlines(), [
+                                        "qa-bro: 0 started", "qa-bro: 0 returned",
+                                        "qa-bro: 1 started", "qa-bro: 1 returned", "qa-bro: 2 started",
+                                    ])
                                     traces[backend] = None
                                 else:
                                     _, payload = result["content"][0]["text"].split("\n\n", 1)
