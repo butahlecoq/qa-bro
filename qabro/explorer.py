@@ -3,9 +3,11 @@
 import json
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from time import time_ns
+import sqlite3
 
 from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope
@@ -52,10 +54,12 @@ def scan_experience(journal: Journal, queue: JobQueue) -> list[str]:
     for attempt, payload in journal.events_of_kind("experience_episode"):
         scope = Scope(**payload.pop("scope"))
         episodes.append(Episode(scope=scope, attempt_id=attempt, **payload))
-    return queue_exploration(queue, episodes)
+    return queue_exploration(queue, episodes, retain_evidence=True)
 
 
-def queue_exploration(queue: JobQueue, episodes: list[Episode]) -> list[str]:
+def queue_exploration(
+    queue: JobQueue, episodes: list[Episode], *, retain_evidence: bool = False,
+) -> list[str]:
     """Group trusted trace metadata without copying tool arguments or page contents."""
     groups: dict[tuple[Scope, str], dict[str, Episode]] = defaultdict(dict)
     for episode in episodes:
@@ -68,6 +72,8 @@ def queue_exploration(queue: JobQueue, episodes: list[Episode]) -> list[str]:
         ):
             group[episode.attempt_id] = episode
 
+    if retain_evidence:
+        ArtifactStore(queue.path)
     queued = []
     for (scope, operation), group in groups.items():
         if len(group) < 2:
@@ -83,7 +89,17 @@ def queue_exploration(queue: JobQueue, episodes: list[Episode]) -> list[str]:
         priority = sum(max(1, episode.model_calls - 1) for episode in group.values())
         identity = json.dumps([payload, priority], sort_keys=True)
         job_id = sha256(identity.encode()).hexdigest()
-        queue.enqueue(job_id, "explore", payload, priority=priority)
+        if retain_evidence:
+            with closing(sqlite3.connect(queue.path)) as db, db:
+                queue.enqueue_in(db, job_id, "explore", payload, priority=priority)
+                db.executemany("""
+                    INSERT OR IGNORE INTO artifact_pins
+                    SELECT ?, id FROM artifacts WHERE id=? AND EXISTS (
+                        SELECT 1 FROM jobs WHERE id=? AND result IS NULL
+                    )
+                """, ((f"explore:{job_id}", episode.evidence_id, job_id) for episode in group.values()))
+        else:
+            queue.enqueue(job_id, "explore", payload, priority=priority)
         queued.append(job_id)
     return queued
 
@@ -111,9 +127,14 @@ def explore_next(
     job = queue.claim("explore", now_ns=clock(), lease_ns=60_000_000_000)
     if job is None:
         return False
+    ArtifactStore(queue.path)
+
+    def release(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM artifact_pins WHERE owner=?", (f"explore:{job.id}",))
+
     draft = synthesize(job)
     if draft is None:
-        return queue.complete(job, {"status": "no_candidate"}, now_ns=clock())
+        return queue.complete(job, {"status": "no_candidate"}, now_ns=clock(), finalize=release)
     if not draft.summary.strip() or not draft.hint.strip() or not draft.variants:
         raise ValueError("A candidate requires a summary, hint and claimed variants")
     if min(draft.model_tokens, draft.browser_ns) < 0:
@@ -123,7 +144,7 @@ def explore_next(
     ):
         return queue.complete(job, {
             "status": "already_published", "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns,
-        }, now_ns=clock())
+        }, now_ns=clock(), finalize=release)
     payload = {
         "scope": job.payload["scope"],
         "operation": job.payload["operation"],
@@ -137,10 +158,14 @@ def explore_next(
         payload["recipe"] = encode_recipe(draft.recipe)
     payload["capabilities"] = sorted(draft.capabilities)
     candidate = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    def enqueue_validation(db: sqlite3.Connection) -> None:
+        queue.enqueue_in(db, candidate, "validate_hint", payload)
+        release(db)
+
     return queue.complete(
         job, {"candidate": candidate, "model_tokens": draft.model_tokens, "browser_ns": draft.browser_ns},
         now_ns=clock(),
-        finalize=lambda db: queue.enqueue_in(db, candidate, "validate_hint", payload),
+        finalize=enqueue_validation,
     )
 
 

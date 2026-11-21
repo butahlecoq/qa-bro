@@ -167,3 +167,28 @@ class ExplorerTests(unittest.TestCase):
         self.assertEqual(len(scan_experience(journal, queue)), 1)
         job = queue.claim("explore", now_ns=1, lease_ns=10)
         self.assertEqual([source["attempt_id"] for source in job.payload["sources"]], ["a", "b"])
+
+    def test_queued_source_evidence_survives_pruning_until_exploration_completes(self):
+        from qabro.artifacts import ArtifactStore
+        from qabro.catalog import Catalog
+        from qabro.explorer import explore_recorded, record_episode, scan_experience
+        from qabro.journal import Journal
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        catalog, journal, store = Catalog(path), Journal(path), ArtifactStore(path)
+        scope = Scope("fixture", "select", "requirements", "editor")
+        for attempt in ("a", "b"):
+            journal.start(attempt, "run", "worker")
+            artifact = store.put(attempt.encode(), now=1)
+            journal.append(attempt, "read:finish", "tool_finish", {"artifact_id": artifact})
+            record_episode(journal, Episode(scope, "Investigate dropdown", attempt, artifact, 3))
+        self.assertEqual(len(scan_experience(journal, catalog.jobs)), 1)
+        self.assertEqual(store.prune(before=100, max_bytes=0), 2)
+
+        def synthesize(job, evidence):
+            self.assertEqual(evidence, (b"a", b"b"))
+            return None
+
+        self.assertTrue(explore_recorded(catalog, synthesize, clock=lambda: 1))
+        scan_experience(journal, catalog.jobs)
+        self.assertEqual(store.prune(before=100, max_bytes=0), 0)
