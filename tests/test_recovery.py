@@ -71,3 +71,38 @@ class RecoveryTests(unittest.TestCase):
         result = run_scenario(scenario, browser, lambda _: Action("submit", {}), observe, recover=recover)
         self.assertEqual(calls, ["submit", "snapshot", "snapshot"])
         self.assertEqual(result.verdict, Verdict.FAIL)
+
+    def test_resume_interrupted_scenario_reconciles_submit_before_continuing(self):
+        from qabro.contract import Scenario, Step, Verdict
+        from qabro.runner import Action, run_scenario
+
+        directory = self.enterContext(TemporaryDirectory())
+        path = Path(directory) / "runs.sqlite"
+        journal = Journal(path)
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        scenario = Scenario("Submit then close", (Step("save", "Submit"), Step("close", "Close")))
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(tool)
+            if tool == "submit":
+                raise KeyboardInterrupt()
+            return {"content": [{"type": "text", "text": "saved"}]}
+
+        def browser_for(log):
+            return BrowserCalls(log, "attempt", "shared", "tab", transport, lambda value: value)
+
+        def resolve(step):
+            return Action("submit" if step.id == "save" else "close", {})
+
+        with self.assertRaises(KeyboardInterrupt):
+            run_scenario(scenario, browser_for(journal), resolve, lambda *_: None)
+        reopened = browser_for(Journal(path))
+
+        def recover(action, step):
+            reconcile(reopened, action, "fresh", "snapshot", {}, lambda _: Effect.COMPLETED)
+
+        attempt = run_scenario(scenario, reopened, resolve, lambda *_: None, recover=recover, resume=True)
+        self.assertEqual(calls, ["submit", "snapshot", "close"])
+        self.assertEqual(attempt.verdict, Verdict.PASS)

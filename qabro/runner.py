@@ -1,7 +1,9 @@
 """Run a source scenario through the shared browser call boundary."""
 
+import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from hashlib import sha256
 from time import monotonic_ns, sleep
 
 from qabro.bindings import AttemptBindings, Option
@@ -59,14 +61,20 @@ def run_scenario(
     bindings: AttemptBindings | None = None,
     max_actions: int | None = None,
     recover: Callable[[str, Step], None] | None = None,
+    resume: bool = False,
 ) -> Attempt:
     """Execute each source step and stop on a failed or unverified required check."""
     journal = browser.journal
     attempt_id = browser.attempt
+    saved = {event: payload for _, event, _, payload in journal.events(attempt_id)} if resume else {}
+    if resume and ("scenario:start" not in saved or "scenario:finish" in saved):
+        raise ValueError("Resume requires an unfinished scenario")
+    revision = sha256(json.dumps(asdict(scenario), sort_keys=True).encode()).hexdigest()
     journal.append(attempt_id, "scenario:start", "scenario_start", {
         "source_hash": scenario.source_hash,
+        "contract_revision": revision,
         "step_ids": [step.id for step in scenario.steps],
-    }, reserve=True)
+    }, reserve=not resume)
     completed = []
     observations = {}
     artifacts = {}
@@ -75,29 +83,41 @@ def run_scenario(
         for index, step in enumerate(scenario.steps):
             if max_actions is not None and index >= max_actions:
                 break
-            if index not in planned and choose is not None and applicable is not None and bindings is not None:
-                recipe = choose(step)
-                if recipe is not None:
-                    covered = tuple(item.source for item in recipe.steps)
-                    if covered == scenario.steps[index:index + len(covered)] and applicable(recipe):
-                        planned.update(enumerate(recipe.steps, start=index))
-                        journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
-                            "id": recipe.id, "revision": recipe.revision,
-                            "steps": [item.id for item in covered],
-                        })
-            action = planned[index].resolve(bindings) if index in planned and bindings is not None else resolve(step)
-            opened = monotonic_ns()
             action_id = f"step-{index}"
-            try:
-                result = browser.invoke(action_id, step.id, action.tool, action.arguments)
-            except TimeoutError:
-                if recover is None:
-                    raise
-                result = None
-            if result is None or result.outcome is not Outcome.RETURNED:
+            replayed = f"{action_id}:start" in saved
+            if replayed:
+                opened = saved[f"{action_id}:window"]["opened_ns"]
+                succeeded = (
+                    saved.get(f"{action_id}:finish", {}).get("outcome") == Outcome.RETURNED
+                )
+            else:
+                if index not in planned and choose is not None and applicable is not None and bindings is not None:
+                    recipe = choose(step)
+                    if recipe is not None:
+                        covered = tuple(item.source for item in recipe.steps)
+                        if covered == scenario.steps[index:index + len(covered)] and applicable(recipe):
+                            planned.update(enumerate(recipe.steps, start=index))
+                            journal.append(attempt_id, f"recipe:{index}", "recipe_selected", {
+                                "id": recipe.id, "revision": recipe.revision,
+                                "steps": [item.id for item in covered],
+                            })
+                action = planned[index].resolve(bindings) if index in planned and bindings is not None else resolve(step)
+                opened = saved.get(f"{action_id}:window", {}).get("opened_ns", monotonic_ns())
+                journal.append(attempt_id, f"{action_id}:window", "step_window", {
+                    "opened_ns": opened,
+                })
+                try:
+                    result = browser.invoke(action_id, step.id, action.tool, action.arguments)
+                except TimeoutError:
+                    if recover is None:
+                        raise
+                    result = None
+                succeeded = result is not None and result.outcome is Outcome.RETURNED
+            if not succeeded:
                 if recover is None:
                     break
-                recover(action_id, step)
+                if saved.get(f"{action_id}:reconciled", {}).get("effect") != "completed":
+                    recover(action_id, step)
                 recovered = any(
                     event == f"{action_id}:reconciled" and kind == "reconciliation"
                     and payload.get("effect") == "completed" and payload.get("probe_event_id")
@@ -108,8 +128,16 @@ def run_scenario(
             completed.append(step.id)
             for checkpoint in step.checkpoints:
                 window = CheckWindow(checkpoint, opened)
+                previous = saved.get(f"check:{checkpoint.id}")
+                if previous is not None:
+                    observations[checkpoint.id] = Observation(previous["outcome"])
+                    artifacts[checkpoint.id] = previous.get("artifact_id")
+                    continue
+                if replayed and checkpoint.wait_ns == 0:
+                    observations[checkpoint.id] = Observation.UNVERIFIED
+                    continue
                 try:
-                    evidence, outcome = _observe(window, observe)
+                    evidence, outcome = _observe(window, observe, start=monotonic_ns() if replayed else 0)
                 except (TimeoutError, BudgetExhausted):
                     observations[checkpoint.id] = Observation.UNVERIFIED
                     raise
@@ -148,11 +176,11 @@ def run_scenario(
 
 
 def _observe(
-    window: CheckWindow, observe: Callable[[Checkpoint, int], Evidence | None]
+    window: CheckWindow, observe: Callable[[Checkpoint, int], Evidence | None], *, start: int = 0,
 ) -> tuple[Evidence | None, Observation]:
     last_evidence = None
     deadline = window.opened_ns + window.checkpoint.wait_ns
-    sample = 0
+    sample = start
     while True:
         evidence = observe(window.checkpoint, sample)
         sample += 1
