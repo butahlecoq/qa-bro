@@ -1,6 +1,7 @@
 """Run a source scenario through the shared browser call boundary."""
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
 from time import monotonic_ns, sleep
@@ -52,10 +53,13 @@ class ArgumentBranch:
     when_false: tuple[tuple[str, str | Parameter], ...]
 
     max_samples: int = 1
+    max_wait_ns: int | None = None
 
     def __post_init__(self):
         if type(self.max_samples) is not int or not 1 <= self.max_samples <= 20:
             raise ValueError("A branch requires between one and twenty samples")
+        if self.max_wait_ns is not None and (type(self.max_wait_ns) is not int or self.max_wait_ns <= 0):
+            raise ValueError("A branch deadline must be a positive number of nanoseconds")
 
 
 @dataclass(frozen=True)
@@ -249,14 +253,31 @@ def run_scenario(
                     if prior_branch is not None:
                         branch_value = prior_branch["outcome"]
                     elif guard_passed and item.branch is not None and probe_branch is not None:
-                        for sample in range(item.branch.max_samples):
-                            if browser.budget is not None:
-                                browser.budget.remaining_seconds()
-                            branch_value = probe_branch(step, item.branch.probe, sample)
-                            if branch_value is not None:
-                                break
+                        branch = item.branch
+                        deadline = monotonic_ns() + (branch.max_wait_ns or 5_000_000_000)
+                        samples = 0
+                        timed_out = False
+                        try:
+                            with browser.budget.until(deadline) if browser.budget else nullcontext():
+                                for sample in range(branch.max_samples):
+                                    if monotonic_ns() >= deadline:
+                                        break
+                                    if browser.budget:
+                                        browser.budget.remaining_seconds()
+                                    samples += 1
+                                    branch_value = probe_branch(step, branch.probe, sample)
+                                    if branch_value is not None:
+                                        break
+                        except (BudgetExhausted, TimeoutError):
+                            if monotonic_ns() < deadline:
+                                raise
+                            timed_out = True
+                        timed_out = timed_out or monotonic_ns() >= deadline
+                        if timed_out:
+                            branch_value = None
                         journal.append(attempt_id, f"{action_id}:branch", "recipe_branch", {
-                            "probe": item.branch.probe, "outcome": branch_value, "samples": sample + 1,
+                            "probe": branch.probe, "outcome": branch_value, "samples": samples,
+                            **({"timed_out": True} if timed_out else {}),
                         })
                     if not guard_passed or (item.branch is not None and branch_value is None):
                         action = resolve(step)

@@ -12,6 +12,9 @@ def encode_recipe(recipe: Recipe) -> str:
     for node in data["steps"]:
         if node.get("guard") is None:
             node.pop("guard", None)
+        branch = node.get("branch")
+        if branch is not None and branch["max_wait_ns"] is None:
+            del branch["max_wait_ns"]
     return json.dumps(data, sort_keys=True, allow_nan=False)
 
 
@@ -27,7 +30,7 @@ def decode_recipe(encoded: str) -> Recipe:
         branch = entry.get("branch")
         condition = ArgumentBranch(
             branch["probe"], _arguments(branch["when_true"]), _arguments(branch["when_false"]),
-            branch.get("max_samples", 1),
+            branch.get("max_samples", 1), branch.get("max_wait_ns"),
         ) if branch is not None else None
         steps.append(RecipeStep(
             Step(source["id"], source["action"], checkpoints), entry["tool"],

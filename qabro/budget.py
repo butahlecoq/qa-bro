@@ -1,6 +1,8 @@
 """Shared limits for one scenario and its synchronous work."""
 
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from math import isfinite
 from threading import Lock
 from time import monotonic_ns
@@ -22,12 +24,21 @@ class Budget:
         self._counts = {"browser": 0, "model": 0}
         self._deadline = monotonic_ns() + int(seconds * 1_000_000_000)
         self._lock = Lock()
+        self._operation_deadline = ContextVar("operation_deadline", default=self._deadline)
 
     def remaining_seconds(self) -> float:
-        remaining = (self._deadline - monotonic_ns()) / 1_000_000_000
+        remaining = (self._operation_deadline.get() - monotonic_ns()) / 1_000_000_000
         if remaining <= 0:
             raise BudgetExhausted("Attempt time limit reached")
         return remaining
+
+    @contextmanager
+    def until(self, deadline_ns: int):
+        token = self._operation_deadline.set(min(self._operation_deadline.get(), deadline_ns))
+        try:
+            yield
+        finally:
+            self._operation_deadline.reset(token)
 
     def consume(self, kind: CallKind) -> float:
         """Reserve a call and return the time available to its transport."""

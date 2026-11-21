@@ -393,3 +393,38 @@ class RunnerTests(unittest.TestCase):
                 guard, = [payload for _, _, kind, payload in journal.events(mode) if kind == "recipe_guard"]
                 self.assertEqual(guard["passed"], mode == "fresh")
                 self.assertEqual(guard["artifact_id"], None if mode == "missing" else "snapshot-1")
+
+    def test_branch_discards_a_match_returned_after_its_deadline(self):
+        from datetime import UTC, datetime
+        from unittest.mock import patch
+
+        from qabro.bindings import AttemptBindings
+        from qabro.runner import ArgumentBranch, Recipe, RecipeStep
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        step = Step("save", "Save")
+        recipe = Recipe("save", "1", (RecipeStep(step, "click", (), ArgumentBranch(
+            "compact", (("selector", "#compact"),), (("selector", "#full"),),
+            max_samples=2, max_wait_ns=10,
+        )),))
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(arguments["selector"])
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        with patch("qabro.runner.monotonic_ns", side_effect=[100, 101, 111, 112, 113]):
+            result = run_scenario(
+                Scenario("Save", (step,)), browser,
+                lambda _: Action("click", {"selector": "#ordinary"}), lambda *_: None,
+                choose=lambda _: recipe, applicable=lambda _: True,
+                bindings=AttemptBindings({}, seed=1, base_time=datetime.now(UTC)),
+                probe_branch=lambda *_: True,
+            )
+        self.assertEqual(result.verdict, Verdict.PASS)
+        self.assertEqual(calls, ["#ordinary"])
+        branch, = [payload for _, _, kind, payload in journal.events("attempt") if kind == "recipe_branch"]
+        self.assertEqual(branch, {"probe": "compact", "outcome": None, "samples": 1, "timed_out": True})
