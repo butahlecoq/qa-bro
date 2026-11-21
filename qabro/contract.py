@@ -10,6 +10,7 @@ from types import MappingProxyType
 class Observation(StrEnum):
     MATCH = "observed_match"
     MISMATCH = "observed_mismatch"
+    PENDING = "pending"
     UNVERIFIED = "unverified"
     NOT_REACHED = "not_reached"
 
@@ -26,6 +27,11 @@ class Checkpoint:
     id: str
     expectation: str
     required: bool = True
+    wait_ns: int = 0
+
+    def __post_init__(self):
+        if self.wait_ns < 0:
+            raise ValueError("Checkpoint wait must be nonnegative")
 
 
 @dataclass(frozen=True)
