@@ -24,7 +24,14 @@ TOOLS = [
 def serve(skills: RunSkills) -> None:
     offered = {}
     for line in sys.stdin:
-        request = json.loads(line)
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            _rpc_error(None, -32700, "Parse error")
+            continue
+        if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
+            _rpc_error(None, -32600, "Invalid request")
+            continue
         if "id" not in request:
             continue
         method = request.get("method")
@@ -42,6 +49,13 @@ def serve(skills: RunSkills) -> None:
             try:
                 params = request["params"]
                 arguments = params["arguments"]
+                if not isinstance(arguments, dict):
+                    raise ValueError("Expected an argument object")
+                schema = next(tool["inputSchema"] for tool in TOOLS if tool["name"] == params["name"])
+                if arguments.keys() != set(schema["required"]) or any(
+                    not isinstance(value, str) for value in arguments.values()
+                ):
+                    raise ValueError("Arguments do not match the tool schema")
                 if params["name"] == "find_skills":
                     refs = skills.find(arguments["query"])
                     offered.update(((ref.id, ref.revision), ref) for ref in refs)
@@ -52,7 +66,7 @@ def serve(skills: RunSkills) -> None:
                 else:
                     raise ValueError("Unknown skill tool")
                 response["result"] = {"content": [{"type": "text", "text": content}]}
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, StopIteration, TypeError, ValueError):
                 response["result"] = {
                     "isError": True,
                     "content": [{"type": "text", "text": "Invalid or unavailable skill request."}],
@@ -60,6 +74,12 @@ def serve(skills: RunSkills) -> None:
         else:
             response["error"] = {"code": -32601, "message": "Method not found"}
         print(json.dumps(response), flush=True)
+
+
+def _rpc_error(request_id: object, code: int, message: str) -> None:
+    print(json.dumps({
+        "jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message},
+    }), flush=True)
 
 
 if __name__ == "__main__":
