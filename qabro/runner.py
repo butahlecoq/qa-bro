@@ -44,16 +44,30 @@ class Parameter:
 
 
 @dataclass(frozen=True)
+class ArgumentBranch:
+    probe: str
+    when_true: tuple[tuple[str, str | Parameter], ...]
+    when_false: tuple[tuple[str, str | Parameter], ...]
+
+
+@dataclass(frozen=True)
 class RecipeStep:
     source: Step
     tool: str
     arguments: tuple[tuple[str, str | Parameter], ...]
+    branch: ArgumentBranch | None = None
 
     def resolve(
         self, bindings: AttemptBindings, read_options: Callable[[str], Options] | None = None,
+        *, branch_value: bool | None = None,
     ) -> Action:
         arguments = {}
-        for key, expression in self.arguments:
+        expressions = self.arguments
+        if self.branch is not None:
+            if branch_value is None:
+                raise ValueError("Recipe branch requires an observation")
+            expressions += self.branch.when_true if branch_value else self.branch.when_false
+        for key, expression in expressions:
             value = bindings.resolve(expression.name, read_options) if isinstance(expression, Parameter) else expression
             arguments[key] = value.id if isinstance(value, Option) else value
         return Action(self.tool, arguments)
@@ -115,6 +129,7 @@ def run_scenario(
     bindings: AttemptBindings | None = None,
     max_actions: int | None = None,
     read_options: Callable[[str], Options] | None = None,
+    probe_branch: Callable[[Step, str], bool | None] | None = None,
     recover: Callable[[str, Step], None] | None = None,
     resume: bool = False,
     load_recipe: Callable[[str, str], Recipe | None] | None = None,
@@ -173,7 +188,14 @@ def run_scenario(
                                 "steps": [item.id for item in covered],
                             })
                 if index in planned and bindings is not None:
-                    action = planned[index].resolve(bindings, read_options)
+                    item = planned[index]
+                    branch_value = None
+                    if item.branch is not None and probe_branch is not None:
+                        branch_value = probe_branch(step, item.branch.probe)
+                    if item.branch is not None and branch_value is None:
+                        action = resolve(step)
+                    else:
+                        action = item.resolve(bindings, read_options, branch_value=branch_value)
                 else:
                     action = resolve(step)
                 opened = saved.get(f"{action_id}:window", {}).get("opened_ns", monotonic_ns())

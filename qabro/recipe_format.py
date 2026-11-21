@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 
 from qabro.contract import Checkpoint, Step
-from qabro.runner import Parameter, Recipe, RecipeCall, RecipeStep
+from qabro.runner import ArgumentBranch, Parameter, Recipe, RecipeCall, RecipeStep
 
 
 def encode_recipe(recipe: Recipe) -> str:
@@ -20,11 +20,21 @@ def decode_recipe(encoded: str) -> Recipe:
             continue
         source = entry["source"]
         checkpoints = tuple(Checkpoint(**check) for check in source["checkpoints"])
-        arguments = tuple(
-            (key, Parameter(**value) if isinstance(value, dict) else value)
-            for key, value in entry["arguments"]
-        )
-        if any(not isinstance(value, (str, Parameter)) for _, value in arguments):
-            raise ValueError("Unsupported recipe argument")
-        steps.append(RecipeStep(Step(source["id"], source["action"], checkpoints), entry["tool"], arguments))
+        branch = entry.get("branch")
+        condition = ArgumentBranch(
+            branch["probe"], _arguments(branch["when_true"]), _arguments(branch["when_false"]),
+        ) if branch is not None else None
+        steps.append(RecipeStep(
+            Step(source["id"], source["action"], checkpoints), entry["tool"],
+            _arguments(entry["arguments"]), condition,
+        ))
     return Recipe(data["id"], data["revision"], tuple(steps))
+
+
+def _arguments(entries: list) -> tuple[tuple[str, str | Parameter], ...]:
+    arguments = tuple(
+        (key, Parameter(**value) if isinstance(value, dict) else value) for key, value in entries
+    )
+    if any(not isinstance(value, (str, Parameter)) for _, value in arguments):
+        raise ValueError("Unsupported recipe argument")
+    return arguments
