@@ -32,7 +32,13 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(catalog.load_hint("after", ref), candidate.hint)
 
     def test_queue_publishes_only_after_validation_and_keeps_existing_pin(self):
+        from time import monotonic_ns
+
         from qabro.artifacts import ArtifactStore
+        from qabro.browser import BrowserCalls
+        from qabro.evidence import Evidence
+        from qabro.journal import Journal
+        from qabro.runner import Action, run_scenario
         from qabro.validation import validate_next_hint
 
         path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
@@ -50,9 +56,21 @@ class ValidationTests(unittest.TestCase):
         def validate(candidate):
             step = Step("open", "Open", (Checkpoint("options", "Options shown"),))
             scenario = Scenario("Open menu", (step,))
-            result = Attempt(scenario, ("open",), {"options": Observation.MATCH})
-            return tuple(ValidationRun(candidate.ref, scope, str(index), str(index),
-                                       "fixed", "open", result, (("options", artifacts[index]),)) for index in range(3))
+            journal = Journal(path)
+            runs = []
+            for index, artifact in enumerate(artifacts):
+                attempt = f"validation-{index}"
+                journal.start(attempt, attempt, "validator")
+                journal.claim_tab("fixture", attempt, attempt)
+                browser = BrowserCalls(
+                    journal, attempt, "fixture", attempt,
+                    lambda *_: {"content": [{"type": "text", "text": "ok"}]}, lambda value: value,
+                )
+                result = run_scenario(scenario, browser, lambda _: Action("click", {}),
+                                      lambda *_: Evidence(monotonic_ns(), artifact, True))
+                runs.append(ValidationRun(candidate.ref, scope, str(index), str(index),
+                                          "fixed", "open", result, (("options", artifact),), attempt))
+            return tuple(runs)
 
         self.assertTrue(validate_next_hint(catalog, validate, clock=lambda: 1))
         self.assertFalse(validate_next_hint(catalog, validate, clock=lambda: 2))

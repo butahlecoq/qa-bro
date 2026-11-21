@@ -7,7 +7,8 @@ from time import time_ns
 
 from qabro.artifacts import ArtifactStore
 from qabro.catalog import Catalog, Scope, SkillRef
-from qabro.contract import Attempt, Verdict
+from qabro.contract import Attempt, Observation, Verdict
+from qabro.journal import Journal
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class ValidationRun:
     variant: str
     result: Attempt
     evidence: tuple[tuple[str, str], ...] = ()
+    attempt_id: str | None = None
 
 
 def eligible(candidate: HintCandidate, runs: tuple[ValidationRun, ...]) -> bool:
@@ -88,13 +90,25 @@ def validate_next_hint(
     )
     runs = validate(candidate)
     store = ArtifactStore(catalog.path)
+    journal = Journal(catalog.path)
     references = set()
     accepted = eligible(candidate, runs)
+    if len({run.attempt_id for run in runs}) != len(runs):
+        accepted = False
     for run in runs:
+        entries = {event: payload for _, event, _, payload in journal.events(run.attempt_id)} if run.attempt_id else {}
+        if entries.get("scenario:start", {}).get("contract_revision") != run.result.scenario.revision:
+            accepted = False
+        if entries.get("scenario:finish", {}).get("verdict") != Verdict.PASS:
+            accepted = False
         required = {check.id for check in run.result.scenario.checkpoints if check.required}
         evidence = dict(run.evidence)
         if not required <= evidence.keys():
             accepted = False
+        for check in required:
+            recorded = entries.get(f"check:{check}", {})
+            if recorded.get("outcome") != Observation.MATCH or recorded.get("artifact_id") != evidence.get(check):
+                accepted = False
         references.update(evidence.values())
     accepted = accepted and all(store.get(ref) is not None for ref in references)
 

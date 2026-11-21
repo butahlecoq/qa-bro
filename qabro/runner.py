@@ -1,9 +1,7 @@
 """Run a source scenario through the shared browser call boundary."""
 
-import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
-from hashlib import sha256
+from dataclasses import dataclass
 from time import monotonic_ns, sleep
 
 from qabro.bindings import AttemptBindings, Option, UnresolvedBinding
@@ -91,10 +89,9 @@ def run_scenario(
     saved = {event: payload for _, event, _, payload in journal.events(attempt_id)} if resume else {}
     if resume and ("scenario:start" not in saved or "scenario:finish" in saved):
         raise ValueError("Resume requires an unfinished scenario")
-    revision = sha256(json.dumps(asdict(scenario), sort_keys=True).encode()).hexdigest()
     journal.append(attempt_id, "scenario:start", "scenario_start", {
         "source_hash": scenario.source_hash,
-        "contract_revision": revision,
+        "contract_revision": scenario.revision,
         "binding_revision": bindings.revision if bindings else None,
         "step_ids": [step.id for step in scenario.steps],
     }, reserve=not resume)

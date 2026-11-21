@@ -1,7 +1,8 @@
 """Source scenario and attempt evidence shared by ordinary execution and replay."""
 
+import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
@@ -60,6 +61,10 @@ class Scenario:
             raise ValueError("Duplicate step ID")
         if len(checkpoint_ids) != len(set(checkpoint_ids)):
             raise ValueError("Duplicate checkpoint ID")
+
+    @property
+    def revision(self) -> str:
+        return sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
 
     @property
     def source_hash(self) -> str:
