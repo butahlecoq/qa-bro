@@ -5,6 +5,8 @@ from datetime import datetime
 from random import Random
 from string import ascii_letters
 
+from qabro.journal import Journal
+
 
 @dataclass(frozen=True)
 class Option:
@@ -51,7 +53,10 @@ class UnresolvedBinding(Exception):
 
 
 class AttemptBindings:
-    def __init__(self, rules: dict[str, Rule], *, seed: int, base_time: datetime):
+    def __init__(
+        self, rules: dict[str, Rule], *, seed: int, base_time: datetime,
+        journal: Journal | None = None, attempt: str | None = None,
+    ):
         if base_time.utcoffset() is None:
             raise ValueError("Attempt time must include a timezone")
         self._rules = dict(rules)
@@ -59,6 +64,29 @@ class AttemptBindings:
         self._random = Random(seed)
         self.seed = seed
         self.base_time = base_time
+
+        if (journal is None) != (attempt is None):
+            raise ValueError("Persistent bindings require a journal and attempt ID")
+        self._journal = journal
+        self._attempt = attempt
+        if journal is not None and attempt is not None:
+            journal.append(attempt, "bindings:setup", "binding_setup", {
+                "seed": seed, "base_time": base_time.isoformat(),
+            })
+            for _, _, kind, payload in journal.events(attempt):
+                if kind != "binding_used":
+                    continue
+                key = payload["key"]
+                rule = self._rules[key]
+                if isinstance(rule, Generated):
+                    expected = "".join(self._random.choices(rule.alphabet, k=rule.length))
+                    if expected != payload["value"]:
+                        raise ValueError(f"Generated rule changed for {key!r}")
+                    self._values[key] = expected
+                elif isinstance(rule, Select):
+                    self._values[key] = Option(payload["id"], payload["label"])
+                else:
+                    raise ValueError(f"Binding rule changed for {key!r}")
 
     def use(self, key: str, *, options: Options | None = None) -> str | Option:
         """Resolve on first use and keep the selected identity for this attempt."""
@@ -81,5 +109,13 @@ class AttemptBindings:
                 if options is None or not options.items or not options.complete:
                     raise UnresolvedBinding(f"Cannot resolve ordered options for {key!r}")
                 value = options.items[-1 if last else 0]
+        if self._journal is not None and self._attempt is not None:
+            payload = None
+            if isinstance(rule, Generated):
+                payload = {"key": key, "value": value}
+            elif isinstance(value, Option):
+                payload = {"key": key, "id": value.id, "label": value.label}
+            if payload is not None:
+                self._journal.append(self._attempt, f"binding:{key}:used", "binding_used", payload)
         self._values[key] = value
         return value
