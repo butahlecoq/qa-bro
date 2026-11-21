@@ -20,3 +20,18 @@ class SynthesisTests(unittest.TestCase):
         self.assertEqual(synthesize_hint(job, (), lambda _: ("null", 10)), NoCandidate(10))
         with self.assertRaises(ValueError):
             synthesize_hint(job, (), lambda _: ('{"summary":"missing fields"}', 1))
+
+    def test_omits_known_run_values_and_snapshot_refs_from_synthesis(self):
+        job = Job("job", "explore", {"operation": "Select category"}, "lease")
+
+        def ask(prompt):
+            self.assertNotIn("Private fixture input", prompt)
+            self.assertNotIn("ref=e42", prompt)
+            self.assertIn("Category", prompt)
+            return '{"summary":"Category","hint":"Click @e42","variants":["open"]}', 13
+
+        result = synthesize_hint(
+            job, (b'Category [ref=e42] "Private fixture input"',), ask,
+            run_values=("Private fixture input",),
+        )
+        self.assertEqual(result, NoCandidate(13))
