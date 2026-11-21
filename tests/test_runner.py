@@ -428,3 +428,48 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(calls, ["#ordinary"])
         branch, = [payload for _, _, kind, payload in journal.events("attempt") if kind == "recipe_branch"]
         self.assertEqual(branch, {"probe": "compact", "outcome": None, "samples": 1, "timed_out": True})
+
+    def test_resume_reobserves_branch_if_action_was_never_dispatched(self):
+        from datetime import UTC, datetime
+        from unittest.mock import patch
+
+        from qabro.bindings import AttemptBindings
+        from qabro.runner import ArgumentBranch, Recipe, RecipeStep
+
+        journal = Journal(Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite")
+        journal.start("attempt", "run", "worker")
+        journal.claim_tab("shared", "tab", "attempt")
+        step = Step("save", "Save")
+        scenario = Scenario("Save", (step,))
+        recipe = Recipe("save", "1", (RecipeStep(step, "click", (), ArgumentBranch(
+            "compact", (("selector", "#compact"),), (("selector", "#full"),),
+        )),))
+        calls = []
+
+        def transport(tab, tool, arguments):
+            calls.append(arguments["selector"])
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        browser = BrowserCalls(journal, "attempt", "shared", "tab", transport, lambda value: value)
+        bindings = AttemptBindings({}, seed=1, base_time=datetime.now(UTC))
+        with patch.object(browser, "invoke", side_effect=RuntimeError("interrupted before dispatch")):
+            with self.assertRaisesRegex(RuntimeError, "interrupted before dispatch"):
+                run_scenario(
+                    scenario, browser, lambda _: self.fail(), lambda *_: None,
+                    choose=lambda _: recipe, applicable=lambda _: True, bindings=bindings,
+                    probe_branch=lambda *_: True,
+                )
+        self.assertEqual(calls, [])
+
+        result = run_scenario(
+            scenario, browser, lambda _: self.fail(), lambda *_: None, bindings=bindings,
+            load_recipe=lambda *_: recipe, resume=True, probe_branch=lambda *_: False,
+            verify_resume=lambda _: Evidence(monotonic_ns(), "current-document", True),
+        )
+        self.assertEqual(result.verdict, Verdict.PASS)
+        self.assertEqual(calls, ["#full"])
+        events = journal.events("attempt")
+        branches = {event: data["outcome"] for _, event, kind, data in events if kind == "recipe_branch"}
+        self.assertEqual(list(branches.values()), [True, False])
+        latest = [data for _, _, kind, data in events if kind == "recipe_action"][-1]
+        self.assertIs(branches[latest["branch_event"]], False)

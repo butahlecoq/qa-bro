@@ -249,10 +249,8 @@ def run_scenario(
                             "artifact_id": proof.artifact_id if proof else None,
                         })
                     branch_value = None
-                    prior_branch = saved.get(f"{action_id}:branch")
-                    if prior_branch is not None:
-                        branch_value = prior_branch["outcome"]
-                    elif guard_passed and item.branch is not None and probe_branch is not None:
+                    branch_event = None
+                    if guard_passed and item.branch is not None and probe_branch is not None:
                         branch = item.branch
                         deadline = monotonic_ns() + (branch.max_wait_ns or 5_000_000_000)
                         samples = 0
@@ -275,18 +273,21 @@ def run_scenario(
                         timed_out = timed_out or monotonic_ns() >= deadline
                         if timed_out:
                             branch_value = None
-                        journal.append(attempt_id, f"{action_id}:branch", "recipe_branch", {
+                        branch_event = f"{action_id}:branch:{uuid4().hex}"
+                        journal.append(attempt_id, branch_event, "recipe_branch", {
                             "probe": branch.probe, "outcome": branch_value, "samples": samples,
                             **({"timed_out": True} if timed_out else {}),
                         })
-                    if not guard_passed or (item.branch is not None and branch_value is None):
-                        action = resolve(step)
-                    else:
-                        action = item.resolve(bindings, read_options, branch_value=branch_value)
-                        journal.append(attempt_id, f"{action_id}:recipe", "recipe_action", {
-                            "step": step.id, "action": action_id,
-                            **({"guard_event": guard_event} if guard_event else {}),
-                        })
+                    fallback = not guard_passed or (item.branch is not None and branch_value is None)
+                    action = (
+                        resolve(step) if fallback
+                        else item.resolve(bindings, read_options, branch_value=branch_value)
+                    )
+                    journal.append(attempt_id, f"{action_id}:recipe:{uuid4().hex}", "recipe_action", {
+                        "step": step.id, "action": action_id, "fallback": fallback,
+                        **({"guard_event": guard_event} if guard_event else {}),
+                        **({"branch_event": branch_event} if branch_event else {}),
+                    })
                 else:
                     action = resolve(step)
                 opened = saved.get(f"{action_id}:window", {}).get("opened_ns", monotonic_ns())

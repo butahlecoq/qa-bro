@@ -152,7 +152,7 @@ def _recipe_step_evidence(selection: str, payload: dict, entries: dict) -> set[s
     for offset, step in enumerate(payload["steps"]):
         action_id = f"step-{index + offset}"
         recorded = entries.get(f"{action_id}:recipe", {})
-        if recorded.get("step") != step or recorded.get("action") != action_id:
+        if recorded.get("step") != step or recorded.get("action") != action_id or recorded.get("fallback"):
             return None
         if entries.get(f"{action_id}:finish", {}).get("outcome") != "returned":
             return None
@@ -170,10 +170,12 @@ def _recipe_step_evidence(selection: str, payload: dict, entries: dict) -> set[s
 
 def _recipe_branch_outcomes(selection: str, payload: dict, entries: dict) -> dict[int, bool | None]:
     index = int(selection.removeprefix("recipe:"))
-    return {
-        offset: entries.get(f"step-{index + offset}:branch", {}).get("outcome")
-        for offset in payload.get("branch_steps", ())
-    }
+    outcomes = {}
+    for offset in payload.get("branch_steps", ()):
+        action = f"step-{index + offset}"
+        branch = entries.get(f"{action}:recipe", {}).get("branch_event", f"{action}:branch")
+        outcomes[offset] = entries.get(branch, {}).get("outcome")
+    return outcomes
 
 
 def _validate_job(
@@ -192,6 +194,10 @@ def _validate_job(
     for run in runs:
         events = journal.events(run.attempt_id) if run.attempt_id else []
         entries = {event: payload for _, event, _, payload in events}
+        entries.update({
+            f"{payload['action']}:recipe": payload
+            for _, _, kind, payload in events if kind == "recipe_action"
+        })
         if candidate.recipe is not None:
             selections = [
                 (event, payload) for _, event, kind, payload in events
