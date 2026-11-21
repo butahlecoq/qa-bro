@@ -8,7 +8,7 @@ from time import monotonic_ns
 from uuid import uuid4
 
 from qabro.artifacts import ArtifactStore
-from qabro.bindings import AttemptBindings, Literal
+from qabro.bindings import AttemptBindings, Literal, Select
 from qabro.catalog import Catalog, Scope, SkillRef
 from qabro.browser import BrowserCalls, Outcome
 from qabro.browse_transport import BrowseTransport
@@ -16,6 +16,7 @@ from qabro.budget import Budget
 from qabro.contract import Checkpoint, Scenario, Step
 from qabro.evidence import Evidence
 from qabro.journal import Journal
+from qabro.options import read_native_options
 from qabro.runner import Action, Parameter, Recipe, RecipeStep, run_scenario
 from qabro.skills import RunSkills
 
@@ -47,18 +48,24 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
             RecipeStep(step, "fill", (
                 ("selector", f"input[name={step.id}]"), ("value", Parameter(step.id)),
             )) for step in scenario.steps[1:3]
-        ))
+        ) + (RecipeStep(scenario.steps[3], "select", (
+            ("selector", "select[name=category]"), ("values", Parameter("category")), ("by", "value"),
+        )),))
         catalog.seed_verified_hint(ref, scope, "Fill the name and due date.", recipe=recipe)
         skills = RunSkills(catalog, attempt, scope, frozenset())
         recipe_options = {
             "choose": lambda step: skills.select_recipe(step, lambda _, refs: refs[0]),
             "applicable": lambda _: True,
             "bindings": AttemptBindings(
-                {key: Literal(commands[key].arguments["value"]) for key in ("name", "date")},
+                {
+                    "name": Literal(commands["name"].arguments["value"]),
+                    "date": Literal(commands["date"].arguments["value"]),
+                    "category": Select(last=True),
+                },
                 seed=0, base_time=datetime.now(UTC),
             ),
         }
-    budget = Budget(browser_calls=6, model_calls=0, seconds=30)
+    budget = Budget(browser_calls=7 if replay else 6, model_calls=0, seconds=30)
     with BrowseTransport(executable, budget=budget) as transport:
         # The fixture uses synthetic values in a dedicated browser context.
         browser = BrowserCalls(journal, attempt, "fixture", tab, transport, lambda value: value,
@@ -73,6 +80,11 @@ def run_fixture(executable: str, database: Path, *, tab: str, url: str, replay: 
             )
             expected = "Baseline sample | 2027-01-20 | operations"
             return Evidence(monotonic_ns(), result.artifact_id, expected in snapshot)
+
+        if replay:
+            recipe_options["read_options"] = lambda _: read_native_options(
+                browser, "category-options", "category", "select[name=category]",
+            )
 
         started = monotonic_ns()
         result = run_scenario(scenario, browser, lambda step: commands[step.id], observe, **recipe_options)
