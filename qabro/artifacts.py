@@ -60,6 +60,12 @@ class ArtifactStore:
                     UNION SELECT json_extract(payload, '$.artifact_id') FROM events
                     UNION SELECT json_extract(payload, '$.evidence_id') FROM events
                 """
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt_restarts' AND type='table'").fetchone():
+                protected += """
+                    UNION SELECT r.setup_artifact_id FROM attempt_restarts r
+                    LEFT JOIN finished_attempts f ON f.attempt_id=r.attempt_id
+                    WHERE COALESCE(f.pruned, 0)=0
+                """
             db.execute(f"CREATE TEMP TABLE retained_artifacts AS {protected}")
             db.execute("CREATE INDEX retained_artifact_id ON retained_artifacts(artifact_id)")
             removable = "NOT EXISTS (SELECT 1 FROM retained_artifacts WHERE artifact_id=artifacts.id)"

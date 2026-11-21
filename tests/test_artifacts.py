@@ -40,3 +40,19 @@ class ArtifactTests(unittest.TestCase):
         self.assertFalse(result["within_limits"])
         self.assertEqual(store.get(proof), b"recovery evidence")
         self.assertIsNone(store.get(unused))
+
+    def test_reset_evidence_survives_while_restart_is_retained(self):
+        from qabro.journal import Journal
+        from qabro.retention import prune_database
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "runs.sqlite"
+        journal, store = Journal(path), ArtifactStore(path)
+        journal.start("first", "run", "worker")
+        journal.append("first", "scenario:finish", "scenario_finish", {"verdict": "FAIL"})
+        proof = store.put(b"reset evidence", now=1)
+        journal.start("retry", "run", "worker", restart_of="first", setup_artifact_id=proof)
+        self.assertFalse(prune_database(path, before_ns=2, journal_bytes=0, artifact_bytes=0)["within_limits"])
+        self.assertEqual(store.get(proof), b"reset evidence")
+        journal.append("retry", "scenario:finish", "scenario_finish", {"verdict": "PASS"})
+        self.assertTrue(prune_database(path, before_ns=2, journal_bytes=0, artifact_bytes=0)["within_limits"])
+        self.assertIsNone(store.get(proof))
