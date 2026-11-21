@@ -103,6 +103,13 @@ class Journal:
         return [(sequence, event, kind, json.loads(payload))
                 for sequence, event, kind, payload in rows]
 
+    def events_of_kind(self, kind: str) -> list[tuple[str, dict]]:
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT attempt_id, payload FROM events WHERE kind=? ORDER BY rowid", (kind,)
+            )
+            return [(attempt, json.loads(payload)) for attempt, payload in rows]
+
     def claim_tab(self, context: str, tab: str, attempt: str) -> bool:
         with closing(self._connect()) as db, db:
             db.execute(

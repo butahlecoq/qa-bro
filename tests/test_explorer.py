@@ -31,3 +31,26 @@ class ExplorerTests(unittest.TestCase):
             {"attempt_id": "b", "evidence_id": "snapshot-b"},
         ])
         self.assertIsNone(queue.claim("explore", now_ns=1, lease_ns=10))
+
+    def test_scanner_restores_reported_episodes_from_disk(self):
+        from qabro.explorer import record_episode, scan_experience
+        from qabro.journal import Journal
+
+        directory = self.enterContext(TemporaryDirectory())
+        path = Path(directory) / "runs.sqlite"
+        journal = Journal(path)
+        queue = JobQueue(path)
+        scope = Scope("fixture", "calendar", "requirements", "editor")
+        for attempt in ("a", "b"):
+            journal.start(attempt, "run", "worker")
+            episode = Episode(scope, "choose date", attempt, f"artifact-{attempt}", 3)
+            record_episode(journal, episode)
+            record_episode(journal, episode)
+        reopened = Journal(path)
+        jobs = scan_experience(reopened, queue)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(scan_experience(reopened, queue), jobs)
+        job = queue.claim("explore", now_ns=1, lease_ns=10)
+        self.assertEqual([source["evidence_id"] for source in job.payload["sources"]], [
+            "artifact-a", "artifact-b",
+        ])
