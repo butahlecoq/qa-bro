@@ -171,3 +171,36 @@ def activate_candidate(
     finally:
         temporary.unlink(missing_ok=True)
     return manifest
+
+
+def train_sakai(
+    output: Path, schema_sha256: str, seeds: tuple[int, int, int],
+    run_worker: Callable[[int, Path | None], tuple[Path, str]],
+    ask_explorer: Callable[[str], tuple[str, int]],
+) -> dict:
+    """Run training, extraction, two fresh validations, and activation in order."""
+    if len(seeds) != 3 or any(type(seed) is not int for seed in seeds) or len(set(seeds)) != 3:
+        raise ValueError("Training and validation require three distinct integer seeds")
+    if not re.fullmatch(r"[a-f0-9]{64}", schema_sha256):
+        raise ValueError("Expected a browse schema digest")
+    if output.exists():
+        raise ValueError("Expected a new candidate directory")
+
+    def run(seed: int, skill: Path | None) -> tuple[Path, str]:
+        database, attempt = run_worker(seed, skill)
+        training_summary(database, attempt)
+        metadata = next(
+            (data for _, event, _, data in Journal(database).events(attempt) if event == "sakai:worker"),
+            {},
+        )
+        if metadata.get("seed") != seed or metadata.get("browser_schema_sha256") != schema_sha256:
+            raise ValueError("Worker trace does not match the requested seed and browser")
+        if skill is None and (metadata.get("skill_applied") is not False or metadata.get("skill_sha256") is not None):
+            raise ValueError("Training must run with an empty catalog")
+        return database, attempt
+
+    source_database, source = run(seeds[0], None)
+    extract_candidate(source_database, source, schema_sha256, output, ask_explorer)
+    candidate = output / "SKILL.md"
+    validations = tuple(run(seed, candidate) for seed in seeds[1:])
+    return activate_candidate(output, source_database, validations)

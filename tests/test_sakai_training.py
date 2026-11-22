@@ -89,3 +89,44 @@ class SakaiTrainingTests(unittest.TestCase):
         active = activate_candidate(candidate, path, ((path, "v1"), (path, "v2")))
         self.assertEqual(active["validation_attempt_ids"], ["v1", "v2"])
         self.assertEqual(json.loads((candidate / "manifest.json").read_text())["status"], "active")
+
+    def test_training_orchestration_keeps_candidate_inactive_during_validation(self):
+        import json
+        from hashlib import sha256
+        from unittest.mock import patch
+
+        from qabro.sakai_training import SECTIONS, train_sakai
+
+        root = Path(self.enterContext(TemporaryDirectory()))
+        database = root / "worker.sqlite"
+        output = root / "candidate"
+        journal, store = Journal(database), ArtifactStore(database)
+        artifact = store.put(b"proof", now=1)
+        calls = []
+
+        def worker(seed, skill):
+            calls.append(seed)
+            if skill:
+                self.assertEqual(json.loads((output / "manifest.json").read_text())["status"], "candidate")
+            attempt = f"attempt-{seed}"
+            journal.start(attempt, "series", "worker")
+            journal.append(attempt, "sakai:worker", "worker_metadata", {
+                "seed": seed, "session_id": attempt, "browser_schema_sha256": "a" * 64,
+                "scenario_sha256": "b" * 64, "skill_applied": skill is not None,
+                "skill_sha256": sha256(skill.read_bytes()).hexdigest() if skill else None,
+            })
+            for step in CREATE_CHECKS:
+                journal.append(attempt, f"check:{step}", "checkpoint", {
+                    "step": step, "outcome": "observed_match", "artifact_id": artifact,
+                })
+            journal.append(attempt, "scenario:finish", "scenario_finish", {"case": "SAKAI-02", "verdict": "PASS"})
+            return database, attempt
+
+        def explorer(_):
+            calls.append("explorer")
+            return "\n\n".join(f"## {section}\nUse name, description and price_cents." for section in SECTIONS), 12
+
+        with patch("qabro.sakai_training.explorer_input", return_value={"actions": [], "checks": []}):
+            active = train_sakai(output, "a" * 64, (1, 2, 3), worker, explorer)
+        self.assertEqual(calls, [1, "explorer", 2, 3])
+        self.assertEqual(active["status"], "active")
