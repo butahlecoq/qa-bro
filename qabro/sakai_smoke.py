@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from hashlib import sha256
 from pathlib import Path
 from time import monotonic, monotonic_ns, sleep
 from urllib.parse import urlsplit
@@ -21,6 +22,11 @@ DIALOG = '[role="dialog"]'
 PRICE = f'{DIALOG} [role="spinbutton"] >> nth=0'
 SEARCH = 'input[placeholder="Search..."]'
 ROW = 'tbody tr'
+
+
+
+class SakaiMismatch(RuntimeError):
+    """An independent browser check observed a different result."""
 
 
 def smoke(
@@ -48,6 +54,28 @@ def smoke(
     with BrowseTransport(executable) as live:
         live.prepare_tab(attempt, allowed_origins=(f"{parsed.scheme}://{parsed.netloc}",))
         try:
+            def record(verdict):
+                if worker_result is not None:
+                    _, tokens, model_calls, session, read_skill = worker_result
+                    scenario = Path(__file__).resolve().parents[1] / "scenarios/sakai/SAKAI-02.md"
+                    journal.append(attempt, "sakai:worker", "worker_metadata", {
+                        "session_id": session, "seed": seed, "model": model, "target_url": url,
+                        "browser_schema_sha256": environment["browse"]["schema_sha256"],
+                        "scenario_sha256": sha256(scenario.read_bytes()).hexdigest(),
+                        "budgets": {"model_calls": 12, "worker_requests": 24, "worker_seconds": 90},
+                        "skill_applied": bool(skill_sha256 and read_skill and position == len(steps) and failure is None),
+                        "skill_sha256": skill_sha256,
+                    })
+                    calls = [payload for _, _, kind, payload in journal.events(attempt) if kind == "tool_start"]
+                    journal.append(attempt, "sakai:usage", "worker_usage", {
+                        "tokens": tokens, "model_calls": model_calls, "elapsed_ns": monotonic_ns() - started,
+                        "mcp_calls": len(calls), "browser_actions": sum(not call["read_only"] for call in calls),
+                    })
+                result = {"verdict": verdict, "case": case, "attempt": attempt, "target_url": url}
+                journal.append(attempt, "scenario:finish", "scenario_finish", result)
+                (output / "smoke.json").write_text(json.dumps(result, indent=2))
+                return result
+
             browser = BrowserCalls(journal, attempt, "sakai", attempt, live, TraceRedactor(), artifacts=store)
             sequence = 0
 
@@ -76,7 +104,7 @@ def smoke(
                     "artifact_id": proof,
                 })
                 if not matched:
-                    raise RuntimeError(f"{step}: observed state did not match; see the local trace")
+                    raise SakaiMismatch(f"{step}: observed state did not match; see the local trace")
 
             def click(step, selector):
                 invoke(step, "click", {"selector": selector})
@@ -237,27 +265,11 @@ def smoke(
                     check("record_absent", count, 0)
                     fill("clear_search", SEARCH, "")
                     check("table_ready", ready, True)
-            if worker_result is not None:
-                _, tokens, model_calls, session, read_skill = worker_result
-                from hashlib import sha256
-
-                scenario = Path(__file__).resolve().parents[1] / "scenarios/sakai/SAKAI-02.md"
-                journal.append(attempt, "sakai:worker", "worker_metadata", {
-                    "session_id": session, "seed": seed, "model": model, "target_url": url,
-                    "browser_schema_sha256": environment["browse"]["schema_sha256"],
-                    "scenario_sha256": sha256(scenario.read_bytes()).hexdigest(),
-                    "budgets": {"model_calls": 12, "worker_requests": 24, "worker_seconds": 90},
-                    "skill_applied": bool(skill_sha256 and read_skill), "skill_sha256": skill_sha256,
-                })
-                calls = [payload for _, _, kind, payload in journal.events(attempt) if kind == "tool_start"]
-                journal.append(attempt, "sakai:usage", "worker_usage", {
-                    "tokens": tokens, "model_calls": model_calls, "elapsed_ns": monotonic_ns() - started,
-                    "mcp_calls": len(calls), "browser_actions": sum(not call["read_only"] for call in calls),
-                })
-            result = {"verdict": "PASS", "case": case, "attempt": attempt, "target_url": url}
-            journal.append(attempt, "scenario:finish", "scenario_finish", result)
-            (output / "smoke.json").write_text(json.dumps(result, indent=2))
-            return result
+            return record("PASS")
+        except (RuntimeError, TimeoutError) as error:
+            if worker_result is None:
+                raise
+            return record("FAIL" if isinstance(error, SakaiMismatch) else "INCONCLUSIVE")
         finally:
             live(attempt, "tabs", {"action": "close"})
             journal.release_tab("sakai", attempt, attempt)
