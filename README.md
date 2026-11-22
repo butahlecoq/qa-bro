@@ -157,3 +157,13 @@ An online export has `kind: "online"` and ordered `attempts`. Each entry include
 For a second-platform comparison, include `platform` in the frozen export and a `transfer` object with the distinct target `platform`, its matched `trials` and its `learning` costs. The report shows the target results independently of the source platform's release criteria.
 
 Only use corporate Pi runs when reporting release or transfer results for corporate platforms. The local browser fixture verifies the reporting and evidence pipeline.
+
+## Sakai Vue smoke test
+
+Run against the public demo with a dedicated browse tab, or pass `--url http://127.0.0.1:5173/pages/crud` for a local Sakai deployment. Supply a new private output directory outside the checkout. The smoke test uses generated product data and leaves the demo records alone.
+
+```sh
+python -m qabro.sakai_smoke /path/to/new-private-output --browse "$(command -v browse)"
+```
+
+Pass `--case SAKAI-01`, `SAKAI-02`, `SAKAI-03`, or `SAKAI-04` to run one scenario in a fresh tab. Use a new output directory for each attempt. The command records the installed browse schema, browser environment, and redacted MCP trace locally. It checks empty-name validation, product creation, exact-row lookup, saved fields, and reset. The four natural-language experiment inputs are in [scenarios/sakai](scenarios/sakai). The smoke test runs directly through browse MCP. The worker and explorer experiment requires the custom Pi harness, whose source and configuration are absent from this checkout.
