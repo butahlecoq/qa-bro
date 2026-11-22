@@ -29,6 +29,7 @@ class SakaiRun:
     mcp_calls: int | None = None
     browser_actions: int | None = None
     worker_tool_calls: int | None = None
+    browser_ns: int | None = None
 
     def __post_init__(self):
         if any(type(value) is not int or value < 0 for value in (
@@ -38,6 +39,10 @@ class SakaiRun:
         if any(value is not None and (type(value) is not int or value < 0)
                for value in (self.model_calls, self.mcp_calls, self.browser_actions, self.worker_tool_calls)):
             raise ValueError("Call and action counters must be nonnegative integers")
+        if self.browser_ns is not None and (
+            type(self.browser_ns) is not int or not 0 <= self.browser_ns <= self.elapsed_ns
+        ):
+            raise ValueError("Browse time must be within the elapsed attempt time")
         if self.skill_applied and not self.skill_revision:
             raise ValueError("An applied skill must identify its frozen revision")
 
@@ -67,11 +72,18 @@ def measured_worker_run(database: Path, attempt: str) -> SakaiRun:
     )
     if verdict is Verdict.PASS and checks != CREATE_CHECKS:
         verdict = Verdict.INCONCLUSIVE
+    durations = [
+        entries.get(event.removesuffix(":start") + ":finish", {}).get("elapsed_ns")
+        for _, event, kind, _ in events if kind == "tool_start"
+    ]
+    browser_ns = sum(durations) if durations and all(
+        type(duration) is int and duration >= 0 for duration in durations
+    ) else None
     return SakaiRun(
         metadata["seed"], sha256(json.dumps(setup, sort_keys=True).encode()).hexdigest(),
         verdict, checks, usage["tokens"], usage["model_calls"], usage["elapsed_ns"],
         metadata.get("skill_sha256"), metadata.get("skill_applied") is True,
-        usage.get("mcp_calls"), usage.get("browser_actions"), usage.get("worker_tool_calls"),
+        usage.get("mcp_calls"), usage.get("browser_actions"), usage.get("worker_tool_calls"), browser_ns,
     )
 
 
@@ -181,6 +193,7 @@ def markdown_report(report: dict) -> str:
     pairs = [row for row in report["pairs"] if row["both_pass"] and row["skill_applied"]]
     for label, key, scale in (
         ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),
+        ("Time inside browse calls (s)", "browser_ns", 1_000_000_000),
         ("LLM calls", "model_calls", 1),
         ("Tokens", "tokens", 1),
         ("Worker tool calls", "worker_tool_calls", 1),
@@ -189,7 +202,7 @@ def markdown_report(report: dict) -> str:
     ):
         totals = []
         for mode in ("baseline", "assisted"):
-            values = [row[mode][key] for row in pairs]
+            values = [row[mode].get(key) for row in pairs]
             totals.append(sum(values) if values and None not in values else None)
         baseline, assisted = totals
         saved = baseline - assisted if baseline is not None and assisted is not None else None
