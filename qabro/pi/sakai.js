@@ -19,7 +19,9 @@ export default function (pi) {
         method: "POST", headers: { Authorization: "Bearer " + QABRO_SAKAI_TOKEN },
         body: JSON.stringify(args), signal,
       });
-      return { content: [{ type: "text", text: await response.text() }] };
+      const text = await response.text();
+      const completion = response.ok && JSON.parse(text).status === "creation_complete";
+      return { content: [{ type: "text", text }], terminate: completion };
     },
   });
 }
