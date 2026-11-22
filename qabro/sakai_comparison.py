@@ -183,6 +183,34 @@ def measure_sakai(
     return pairs
 
 
+def _performance_table(pairs: list[dict]) -> list[str]:
+    lines = [
+        "| Metric | Without skill | Skill available | Saved |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for label, key, scale in (
+        ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),
+        ("Time inside browse calls (s)", "browser_ns", 1_000_000_000),
+        ("LLM calls", "model_calls", 1),
+        ("Tokens", "tokens", 1),
+        ("Worker tool calls", "worker_tool_calls", 1),
+        ("MCP calls", "mcp_calls", 1),
+        ("Browser actions", "browser_actions", 1),
+    ):
+        totals = []
+        for mode in ("baseline", "assisted"):
+            values = [row[mode].get(key) for row in pairs]
+            totals.append(sum(values) if values and None not in values else None)
+        baseline, assisted = totals
+        saved = baseline - assisted if baseline is not None and assisted is not None else None
+        cells = [
+            "—" if value is None else str(value) if scale == 1 else f"{value / scale:.3f}"
+            for value in (*totals, saved)
+        ]
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def markdown_report(report: dict) -> str:
     estimate = report["estimated_reuses_to_break_even"]
     learning = report["learning_tokens"]
@@ -210,33 +238,10 @@ def markdown_report(report: dict) -> str:
             lines.append(f"| {mode} | 0 | — | — |")
     if medians.get("assisted") and medians.get("baseline"):
         lines.extend(["", f"Observed median speed ratio (baseline / assisted): {medians['baseline'] / medians['assisted']:.2f}×."])
-    lines.extend([
-        "",
-        "Performance totals for pairs that passed all required checks and used the skill.", "",
-        "| Metric | Without skill | With skill | Saved |",
-        "| --- | ---: | ---: | ---: |",
-    ])
-    pairs = [row for row in report["pairs"] if row["both_pass"] and row["skill_applied"]]
-    for label, key, scale in (
-        ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),
-        ("Time inside browse calls (s)", "browser_ns", 1_000_000_000),
-        ("LLM calls", "model_calls", 1),
-        ("Tokens", "tokens", 1),
-        ("Worker tool calls", "worker_tool_calls", 1),
-        ("MCP calls", "mcp_calls", 1),
-        ("Browser actions", "browser_actions", 1),
-    ):
-        totals = []
-        for mode in ("baseline", "assisted"):
-            values = [row[mode].get(key) for row in pairs]
-            totals.append(sum(values) if values and None not in values else None)
-        baseline, assisted = totals
-        saved = baseline - assisted if baseline is not None and assisted is not None else None
-        cells = [
-            "—" if value is None else str(value) if scale == 1 else f"{value / scale:.3f}"
-            for value in (*totals, saved)
-        ]
-        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    lines.extend(["", "Performance totals for all measured attempts.", ""])
+    lines.extend(_performance_table(report["pairs"]))
+    lines.extend(["", "Performance totals for pairs that passed all required checks and used the skill.", ""])
+    lines.extend(_performance_table([row for row in matched if row["skill_applied"]]))
     lines.extend([
         "", "All measurement pairs", "",
         "| Seed | Mode | Verdict | Checks passed | Skill used | Seconds | Tokens | LLM calls | Worker calls | MCP calls | Browser actions |",

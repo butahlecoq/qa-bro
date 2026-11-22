@@ -1,7 +1,7 @@
 import unittest
 from dataclasses import replace
 
-from qabro.sakai_comparison import SakaiRun, compare_sakai
+from qabro.sakai_comparison import SakaiRun, compare_sakai, markdown_report
 
 
 class SakaiComparisonTests(unittest.TestCase):
@@ -21,6 +21,9 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertEqual(report["assisted_pass_without_reuse"], 1)
         self.assertEqual(report["estimated_reuses_to_break_even"], 2)
         self.assertEqual(report["observed_net_tokens_saved"], -40)
+        rendered = markdown_report(report)
+        self.assertIn("| Tokens | 300 | 260 | 40 |", rendered)
+        self.assertIn("| Tokens | 100 | 60 | 40 |", rendered)
 
     def test_manifest_command_writes_the_two_private_report_formats(self):
         import json
