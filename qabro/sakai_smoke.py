@@ -4,7 +4,7 @@ import argparse
 import json
 from hashlib import sha256
 from pathlib import Path
-from time import monotonic, monotonic_ns, sleep
+from time import monotonic_ns
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -106,14 +106,30 @@ def smoke(
                 raw, proof = invoke(step, "eval", {"expression": expression}, read=True)
                 return json.loads(raw), proof
 
+            def wait_for(step, expression, expected, *, wait_ms=3000):
+                predicate = f"""async () => {{
+                    const observe = ({expression});
+                    const expected = {json.dumps(expected, allow_nan=False)};
+                    const deadline = performance.now() + {wait_ms};
+                    let samples = 0;
+                    let actual;
+                    do {{
+                        actual = observe();
+                        samples++;
+                        if (JSON.stringify(actual) === JSON.stringify(expected)) break;
+                        const remaining = deadline - performance.now();
+                        if (remaining <= 0) break;
+                        await new Promise(resolve => setTimeout(resolve, Math.min(150, remaining)));
+                    }} while (performance.now() <= deadline);
+                    return {{observed: actual !== undefined, value: actual ?? null, samples}};
+                }}"""
+                raw, proof = invoke(step, "eval", {"expression": predicate, "timeout": wait_ms + 1000}, read=True)
+                result = json.loads(raw)
+                actual = result["value"]
+                return result["observed"] and type(actual) is type(expected) and actual == expected, proof
+
             def check(step, expression, expected):
-                deadline = monotonic() + 3
-                while True:
-                    actual, proof = evaluate(step, expression)
-                    matched = type(actual) is type(expected) and actual == expected
-                    if matched or monotonic() >= deadline:
-                        break
-                    sleep(0.15)
+                matched, proof = wait_for(step, expression, expected)
                 journal.append(attempt, f"check:{step}", "checkpoint", {
                     "step": step, "outcome": "observed_match" if matched else "observed_mismatch",
                     "artifact_id": proof,
@@ -129,13 +145,9 @@ def smoke(
 
             def open_page(step):
                 invoke(step, "navigate", {"url": url})
-                deadline = monotonic() + 10
-                while monotonic() < deadline:
-                    ready, _ = evaluate(step, "() => !!document.querySelector('tbody tr')")
-                    if ready:
-                        return
-                    sleep(0.25)
-                raise RuntimeError(f"{step}: product table did not become ready")
+                ready, _ = wait_for(step, "() => !!document.querySelector('tbody tr')", True, wait_ms=10_000)
+                if not ready:
+                    raise RuntimeError(f"{step}: product table did not become ready")
 
             environment = {
                 "browse": snapshot_schema(live), "target_url": url, "tab": attempt,
@@ -143,7 +155,7 @@ def smoke(
                 "harness": ("qa-bro Codex" if model and model.startswith("codex/") else "qa-bro Pi")
                 if pi_worker else None,
             }
-            open_page("ready")
+            open_page("initial_reset")
             traits, _ = evaluate("environment", "() => ({user_agent:navigator.userAgent, width:innerWidth, height:innerHeight})")
             environment.update(traits)
             (output / "environment.json").write_text(json.dumps(environment, indent=2))
@@ -172,7 +184,6 @@ def smoke(
                 check(f"{step}_target", f"() => [{exact_rows}.length, document.querySelectorAll('tbody tr[data-pc-section=bodyrow]').length]", [1, 1])
                 click(step, f"{ROW} button:has(.pi-{icon})")
 
-            open_page("initial_reset")
             fill("reset_search", SEARCH, product)
             check("reset_absent", count, 0)
             fill("reset_clear", SEARCH, "")
