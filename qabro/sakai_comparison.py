@@ -185,12 +185,15 @@ def measure_sakai(
 
 def markdown_report(report: dict) -> str:
     estimate = report["estimated_reuses_to_break_even"]
+    learning = report["learning_tokens"]
     lines = [
         "# Sakai skill comparison", "",
         f"Verified skill reuses: {report['verified_reuses']} of {len(report['pairs'])} pairs.",
         f"Pairs with all checks passing in both modes: {report['both_pass']}.",
         f"Assisted passes without using the skill: {report.get('assisted_pass_without_reuse', 0)}.",
-        f"Learning tokens: {sum(report['learning_tokens'].values())}.",
+        f"Learning tokens: {sum(learning.values())} "
+        f"({learning['training']} training, {learning['extraction']} extraction, {learning['validation']} validation).",
+        f"Net tokens saved across all pairs after learning: {report['observed_net_tokens_saved']}.",
         f"Estimated reuses to break even: {estimate if estimate is not None else 'unavailable'}.", "",
         "Performance totals for pairs that passed all required checks and used the skill.", "",
         "| Metric | Without skill | With skill | Saved |",
@@ -219,15 +222,19 @@ def markdown_report(report: dict) -> str:
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
     lines.extend([
         "", "All measurement pairs", "",
-        "| Seed | Baseline | Assisted | Skill applied | Baseline tokens | Assisted tokens |",
-        "| --- | --- | --- | --- | ---: | ---: |",
+        "| Seed | Mode | Verdict | Checks passed | Skill used | Seconds | Tokens | LLM calls | Worker calls | MCP calls | Browser actions |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ])
     for row in report["pairs"]:
-        baseline, assisted = row["baseline"], row["assisted"]
-        lines.append(
-            f"| {row['seed']} | {baseline['verdict']} | {assisted['verdict']} | "
-            f"{'yes' if row['skill_applied'] else 'no'} | {baseline['tokens']} | {assisted['tokens']} |"
-        )
+        for mode in ("baseline", "assisted"):
+            run = row[mode]
+            cells = [
+                row["seed"], mode, run["verdict"], ", ".join(run["checks"]) or "—",
+                "yes" if run["skill_applied"] else "no",
+                f"{run['elapsed_ns'] / 1_000_000_000:.3f}", run["tokens"], run["model_calls"],
+                run.get("worker_tool_calls"), run.get("mcp_calls"), run.get("browser_actions"),
+            ]
+            lines.append("| " + " | ".join("—" if cell is None else str(cell) for cell in cells) + " |")
     return "\n".join(lines) + "\n"
 
 
