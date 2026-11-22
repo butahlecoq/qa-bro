@@ -6,9 +6,9 @@ QA Bro is a local skill system for an existing Pi QA agent that drives a browser
 
 This repository evaluates the implementation on locally controlled fixtures and open-source applications with browse and an OpenCode session.
 
-- [Baseline smoke test](https://github.com/butahlecoq/qa-bro/issues/1) requires a recorded local run with an empty catalog.
+- [Baseline smoke test](https://github.com/butahlecoq/qa-bro/issues/1) verified the local requirements fixture with an empty catalog.
 - [Held-out pilot](https://github.com/butahlecoq/qa-bro/issues/11) requires matched runs in all four modes, separate online-learning costs, and results on a second platform.
-- [Compiled backend evaluation](https://github.com/butahlecoq/qa-bro/issues/12) requires paired traces for a recipe selected from the pilot. Plain dispatch is the current default.
+- [Compiled backend evaluation](https://github.com/butahlecoq/qa-bro/issues/12) kept plain dispatch as the default after paired category-picker trials.
 
 - [Design specification](SPEC.md)
 - [Glossary](GLOSSARY.md)
