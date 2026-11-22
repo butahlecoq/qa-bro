@@ -1,6 +1,10 @@
 """Compare paired Sakai runs while charging skill acquisition and reuse costs."""
 
+import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from hashlib import sha256
+from pathlib import Path
 from math import ceil
 from statistics import mean
 
@@ -85,6 +89,42 @@ def compare_sakai(
         ) - investment,
     }
 
+def measure_sakai(
+    candidate_directory: Path, measurement_seeds: tuple[int, ...], learning_seeds: frozenset[int],
+    run_worker: Callable[[int, Path | None], SakaiRun],
+) -> list[tuple[SakaiRun, SakaiRun]]:
+    """Run matched measurement pairs in alternating order against one validated skill."""
+    if (
+        not measurement_seeds or len(set(measurement_seeds)) != len(measurement_seeds)
+        or set(measurement_seeds) & learning_seeds
+    ):
+        raise ValueError("Measurement seeds must be distinct from training and validation seeds")
+    manifest = json.loads((candidate_directory / "manifest.json").read_text())
+    if manifest.get("status") != "active":
+        raise ValueError("Measurement requires an active candidate")
+    skill = candidate_directory / "SKILL.md"
+    digest = manifest["content_sha256"]
+
+    def check_frozen_skill():
+        if sha256(skill.read_bytes()).hexdigest() != digest:
+            raise ValueError("The frozen measurement skill changed")
+
+    pairs = []
+    for index, seed in enumerate(measurement_seeds):
+        pair = {}
+        for assisted in ((False, True) if index % 2 == 0 else (True, False)):
+            check_frozen_skill()
+            run = run_worker(seed, skill if assisted else None)
+            check_frozen_skill()
+            if run.seed != seed or run.skill_revision != (digest if assisted else None):
+                raise ValueError("Worker trace does not match the requested seed and skill")
+            pair[assisted] = run
+        if pair[False].setup != pair[True].setup:
+            raise ValueError("Measurement modes used different configurations")
+        pairs.append((pair[False], pair[True]))
+    return pairs
+
+
 def markdown_report(report: dict) -> str:
     estimate = report["estimated_reuses_to_break_even"]
     lines = [
@@ -132,8 +172,6 @@ def markdown_report(report: dict) -> str:
 
 if __name__ == "__main__":
     import argparse
-    import json
-    from pathlib import Path
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)

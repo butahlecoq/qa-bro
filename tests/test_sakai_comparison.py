@@ -45,3 +45,29 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertIn("| 1 | PASS | PASS | yes | 100 | 75 |", (output / "report.md").read_text())
         self.assertIn("| MCP calls | 6 | 4 | 2 |", (output / "report.md").read_text())
         self.assertIn("| Browser actions | — | — | — |", (output / "report.md").read_text())
+
+    def test_measurement_alternates_order_and_keeps_each_pair_on_one_seed(self):
+        import json
+        from hashlib import sha256
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.sakai_comparison import measure_sakai
+
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        content = b"Verified skill."
+        digest = sha256(content).hexdigest()
+        (directory / "SKILL.md").write_bytes(content)
+        (directory / "manifest.json").write_text(json.dumps({"status": "active", "content_sha256": digest}))
+        calls = []
+
+        def worker(seed, skill):
+            calls.append((seed, skill is not None))
+            return SakaiRun(seed, "matched", "PASS", ("saved",), 10, 1, 100,
+                            digest if skill else None, skill is not None)
+
+        pairs = measure_sakai(directory, (4, 5), frozenset({1, 2, 3}), worker)
+        self.assertEqual(calls, [(4, False), (4, True), (5, True), (5, False)])
+        self.assertEqual([baseline.seed for baseline, _ in pairs], [4, 5])
+        with self.assertRaisesRegex(ValueError, "training and validation seeds"):
+            measure_sakai(directory, (3,), frozenset({1, 2, 3}), worker)
