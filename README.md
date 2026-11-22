@@ -4,9 +4,9 @@ QA Bro is a local skill system for an existing Pi QA agent that drives a browser
 
 ## Project status
 
-The local implementation can run against the browser fixtures with browse and an OpenCode session. Corporate verification is tracked in three issues.
+This repository evaluates the implementation on locally controlled fixtures and open-source applications with browse and an OpenCode session.
 
-- [Baseline smoke test](https://github.com/butahlecoq/qa-bro/issues/1) requires one recorded run through the existing Pi harness with an empty catalog.
+- [Baseline smoke test](https://github.com/butahlecoq/qa-bro/issues/1) requires a recorded local run with an empty catalog.
 - [Held-out pilot](https://github.com/butahlecoq/qa-bro/issues/11) requires matched runs in all four modes, separate online-learning costs, and results on a second platform.
 - [Compiled backend evaluation](https://github.com/butahlecoq/qa-bro/issues/12) requires paired traces for a recipe selected from the pilot. Plain dispatch is the current default.
 
@@ -62,7 +62,7 @@ On the verified run the agent reported `PASS` with the exact expected row. The J
 
 To exercise the controlled defect, append `?wrong-category` to the fixture URL in the prompt and choose a different tab name. Keep the expected row unchanged. In the verified run, the browser returned `Agent sample | 2027-01-20 | wrong` after reporting successful creation. The agent reported `FAIL`. The trace recorded 11 completed model steps, 10 OpenCode tool dispatches, and 29.4 seconds between the first and last events.
 
-For the corporate Pi smoke test, use the existing authenticated harness with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage for one existing scenario. Record measured `model_calls`, `input_tokens`, `output_tokens` and `elapsed_ns` in the attempt's `baseline:usage` event. Run `python -m qabro.baseline_evidence DATABASE ATTEMPT_ID` to check source step order, installed tool identities and evidence references. The command prints an evidence summary without raw browser output. Inspect persisted evidence locally to verify that authentication material was redacted.
+For an integration smoke test, run a scenario with an empty skill catalog. Record the installed browse schema, ordered step and tool events, attempt verdict, evidence references, and model usage. Record measured `model_calls`, `input_tokens`, `output_tokens` and `elapsed_ns` in the attempt's `baseline:usage` event. Run `python -m qabro.baseline_evidence DATABASE ATTEMPT_ID` to check source step order, installed tool identities and evidence references. The command prints an evidence summary without raw browser output. Inspect persisted evidence locally to verify that authentication material was redacted.
 
 ### Skill lookup from an existing agent
 
@@ -156,7 +156,7 @@ An online export has `kind: "online"` and ordered `attempts`. Each entry include
 
 For a second-platform comparison, include `platform` in the frozen export and a `transfer` object with the distinct target `platform`, its matched `trials` and its `learning` costs. The report shows the target results independently of the source platform's release criteria.
 
-Only use corporate Pi runs when reporting release or transfer results for corporate platforms. The local browser fixture verifies the reporting and evidence pipeline.
+Scope release and transfer results to the applications exercised by the pilot.
 
 ## Sakai Vue smoke test
 
@@ -210,6 +210,8 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 ```
 
 The adapter rejects stored API-key credentials and removes API-key environment overrides. OpenCode reports completed model steps and token usage. Keep its results separate from Pi and Codex runs.
+
+For a 30-pair batch, serve [Sakai Vue 5.0.0](https://github.com/primefaces/sakai-vue/releases/tag/5.0.0) locally and pass `--url http://127.0.0.1:5173/pages/crud --pairs 30`. Each pair uses a fresh seed for SAKAI-02. Results from that batch characterize this one scenario across synthetic inputs.
 
 To measure a fresh pair with a previously validated skill, add `--candidate-from /path/to/previous-experiment --measurement-seed 5` and use a new output directory. The harness checks the browser schema, model, target URL, and candidate digest. It keeps reports for separate runs independent.
 

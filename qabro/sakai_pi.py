@@ -253,8 +253,10 @@ def main():
         parser.error("--resume-training requires --experiment")
     if args.require_skill and not args.experiment:
         parser.error("--require-skill requires --experiment")
-    if not 1 <= args.pairs <= 5:
-        parser.error("--pairs expects between one and five pairs")
+    if not 1 <= args.pairs <= 30:
+        parser.error("--pairs expects between one and thirty pairs")
+    if args.pairs > 5 and args.url == PUBLIC_URL:
+        parser.error("Use a loopback Sakai deployment for batches larger than five pairs")
     launch = run_opencode if args.opencode else run_codex if args.codex else run_pi
     executable = args.opencode or args.codex or args.pi
     model = f"opencode/{args.model}" if args.opencode else f"codex/{args.model}" if args.codex else args.model

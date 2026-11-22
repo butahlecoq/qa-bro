@@ -380,7 +380,7 @@ The initial release requires zero new false PASS verdicts on the prepared set of
 | 5 Active probes | The explorer tests missing variants in its own tab | Probes preserve the independence of running tests and stay within budget |
 | 6 Transfer and optimization | Verification on a second platform and selective use of the `execute` backend | Applicability has been verified and the return on investment measured |
 
-In this example, signing in and switching to Chinese happen once during browser setup. The scenario from the corporate environment, as recalled from memory, then directs the worker to follow a link in the browser, open the form for creating a requirement, fill in the fields (including dates and dropdowns), export a file, and click “Create.” The development computer has no access to the platform. These operations guide the pilot. The details of widget behavior and the benefits of the skills still need verification on the platform.
+The repository pilot uses locally controlled fixtures and open-source applications. A scenario can inherit browser setup completed before the measured run, such as signing in and changing the interface language. Scope widget behavior, performance, and transfer claims to the applications and scenarios exercised by the pilot.
 
 Possible first recipes include selecting from lists, filling out recurring forms, filtering tables, finding a newly created record, and working with dates. Frequency and cost in real traces determine the final priorities.
 
