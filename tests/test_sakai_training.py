@@ -29,7 +29,7 @@ class SakaiTrainingTests(unittest.TestCase):
         from hashlib import sha256
         from unittest.mock import patch
 
-        from qabro.sakai_training import extract_candidate
+        from qabro.sakai_training import ExplorerDeclined, extract_candidate
 
         output = Path(self.enterContext(TemporaryDirectory())) / "candidate"
         response = '{"reuse":true}'
@@ -42,6 +42,10 @@ class SakaiTrainingTests(unittest.TestCase):
                 self.assertNotIn("local-only", prompt)
                 return response, 17
 
+            with self.assertRaises(ExplorerDeclined) as declined:
+                extract_candidate(Path("unused"), "source", "a" * 64, output, lambda _: ('{"reuse":false}', 11))
+            self.assertEqual(declined.exception.tokens, 11)
+            self.assertFalse(output.exists())
             manifest = extract_candidate(Path("unused"), "source", "a" * 64, output, ask)
         self.assertEqual(manifest["status"], "candidate")
         self.assertEqual(manifest["source_attempt_ids"], ["source"])

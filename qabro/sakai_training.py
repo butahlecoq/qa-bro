@@ -12,6 +12,12 @@ from qabro.journal import Journal
 from qabro.sakai_cases import CREATE_CHECKS
 
 
+class ExplorerDeclined(ValueError):
+    def __init__(self, tokens: int):
+        super().__init__("Explorer declined the observed Price interaction")
+        self.tokens = tokens
+
+
 def training_summary(database: Path, attempt: str) -> dict:
     if not database.is_file():
         raise ValueError("Expected an existing Sakai evidence database")
@@ -88,16 +94,18 @@ def extract_candidate(
         + json.dumps(interaction)
     )
     response, tokens = ask(prompt)
+    if type(tokens) is not int or tokens < 0:
+        raise ValueError("Explorer response must include measured token usage")
     decision = json.loads(response)
-    if not isinstance(decision, dict) or decision.keys() != {"reuse"} or decision["reuse"] is not True:
-        raise ValueError("Explorer declined or did not select the observed Price interaction")
+    if not isinstance(decision, dict) or decision.keys() != {"reuse"} or type(decision["reuse"]) is not bool:
+        raise ValueError("Explorer response must contain a boolean reuse decision")
+    if not decision["reuse"]:
+        raise ExplorerDeclined(tokens)
     markdown = (
         "# Sakai Price input\n\n"
         "When the product form is open and Price is the target, use browse fill with selector "
         f"`{interaction['selector']}`. Verify the current field value independently."
     )
-    if type(tokens) is not int or tokens < 0:
-        raise ValueError("Explorer response must include measured token usage")
     encoded = markdown.strip().encode() + b"\n"
     manifest = {
         "id": "sakai-price-input", "version": 1, "status": "candidate",

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
-from math import ceil
+from math import ceil, comb
 from statistics import mean, median
 
 
@@ -127,10 +127,23 @@ def compare_sakai(
             "elapsed_ns_saved": baseline.elapsed_ns - assisted.elapsed_ns,
         })
     reuses = [row for row in rows if row["both_pass"] and row["skill_applied"]]
+    paired_deltas = [row["elapsed_ns_saved"] for row in rows if row["both_pass"]]
+    faster = sum(delta > 0 for delta in paired_deltas)
+    slower = sum(delta < 0 for delta in paired_deltas)
+    decisive = faster + slower
+    sign_probability = (
+        min(1.0, 2 * sum(comb(decisive, count) for count in range(min(faster, slower) + 1)) / 2 ** decisive)
+        if decisive else None
+    )
     saved_per_reuse = mean(row["tokens_saved"] for row in reuses) if reuses else None
     investment = sum(learning.values())
     return {
         "pairs": rows, "both_pass": sum(row["both_pass"] for row in rows),
+        "paired_latency": {
+            "median_ns_saved": median(paired_deltas) if paired_deltas else None,
+            "faster": faster, "slower": slower, "ties": len(paired_deltas) - decisive,
+            "sign_test_p": sign_probability,
+        },
         "verified_reuses": len(reuses),
         "assisted_pass_without_reuse": sum(
             pair[1].verdict == "PASS" and required_checks <= set(pair[1].checks) and not pair[1].skill_applied
@@ -242,6 +255,8 @@ def markdown_report(report: dict) -> str:
             f"with {report['measurement_jobs']} concurrent pair slots.",
             "",
         ]
+    if report.get("acquisition_elapsed_ns") is not None:
+        lines.insert(2, f"Acquisition wall time: {report['acquisition_elapsed_ns'] / 1_000_000_000:.3f} s.")
     matched = [row for row in report["pairs"] if row["both_pass"]]
     medians = {}
     for mode in ("baseline", "assisted"):
@@ -253,6 +268,15 @@ def markdown_report(report: dict) -> str:
             lines.append(f"| {mode} | 0 | — | — |")
     if medians.get("assisted") and medians.get("baseline"):
         lines.extend(["", f"Observed median speed ratio (baseline / assisted): {medians['baseline'] / medians['assisted']:.2f}×."])
+    paired = report.get("paired_latency")
+    if paired and paired["median_ns_saved"] is not None:
+        lines.extend([
+            "",
+            f"Median paired time saved: {paired['median_ns_saved'] / 1_000_000_000:.3f} s. "
+            f"Assisted was faster in {paired['faster']}, slower in {paired['slower']}, and tied in {paired['ties']} pairs.",
+        ])
+        if paired["sign_test_p"] is not None:
+            lines.append(f"Exact two-sided sign test on non-tied pairs: p = {paired['sign_test_p']:.4g}.")
     lines.extend(["", "Performance totals for all measured attempts.", ""])
     lines.extend(_performance_table(report["pairs"]))
     lines.extend(["", "Performance totals for pairs that passed all required checks and used the skill.", ""])

@@ -21,6 +21,9 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertEqual(report["assisted_pass_without_reuse"], 1)
         self.assertEqual(report["estimated_reuses_to_break_even"], 2)
         self.assertEqual(report["observed_net_tokens_saved"], -40)
+        self.assertEqual(report["paired_latency"], {
+            "median_ns_saved": 0, "faster": 0, "slower": 0, "ties": 2, "sign_test_p": None,
+        })
         rendered = markdown_report(report)
         self.assertIn("| Tokens | 300 | 260 | 40 |", rendered)
         self.assertIn("| Tokens | 100 | 60 | 40 |", rendered)

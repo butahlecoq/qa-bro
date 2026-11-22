@@ -17,7 +17,7 @@ from tempfile import TemporaryDirectory
 from qabro.sakai_cases import CREATE_CHECKS
 from qabro.opencode_metrics import summarize
 from qabro.sakai_comparison import compare_sakai, markdown_report, measure_sakai, measured_worker_run
-from qabro.sakai_training import train_sakai
+from qabro.sakai_training import ExplorerDeclined, train_sakai
 from qabro.sakai_smoke import PRICE, PUBLIC_URL, smoke
 
 
@@ -243,7 +243,9 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--url", default=PUBLIC_URL)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--experiment", action="store_true", help="Train, validate, and measure five A/B pairs")
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--experiment", action="store_true", help="Measure held-out pairs, training first if needed")
+    phase.add_argument("--train-only", action="store_true", help="Finish exploration and validation without measuring")
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
@@ -251,8 +253,8 @@ def main():
     args = parser.parse_args()
     if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
         parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
-    if args.resume_training and not args.experiment:
-        parser.error("--resume-training requires --experiment")
+    if args.resume_training and not (args.experiment or args.train_only):
+        parser.error("--resume-training requires --experiment or --train-only")
     if args.require_skill and not args.experiment:
         parser.error("--require-skill requires --experiment")
     if not 1 <= args.pairs <= 30:
@@ -289,7 +291,7 @@ def main():
         )
         return directory / "smoke.sqlite", result["attempt"]
 
-    if not args.experiment:
+    if not (args.experiment or args.train_only):
         database, attempt = run_worker(args.seed, None)
         from dataclasses import asdict
 
@@ -309,17 +311,29 @@ def main():
         return text, tokens
 
     seeds = tuple(range(args.seed, args.seed + 3))
+    acquisition_elapsed_ns = None
     if args.candidate_from:
         previous = args.candidate_from.resolve()
         candidate_dir = previous / "candidate"
-        candidate = json.loads((candidate_dir / "manifest.json").read_text())
-        prior = json.loads((previous / "comparison.json").read_text())
         earlier_seeds = {
             int(path.parent.name.removesuffix("-baseline").removesuffix("-assisted"))
             for path in previous.glob("*/smoke.json")
         }
-        baseline_seed = prior["pairs"][0]["seed"]
-        environment = json.loads((previous / f"{baseline_seed}-baseline" / "environment.json").read_text())
+        acquisition_path = previous / "acquisition.json"
+        if acquisition_path.is_file():
+            prior = json.loads(acquisition_path.read_text())
+            if prior["status"] != "active":
+                parser.error("The saved acquisition did not produce an active candidate")
+            environment = prior
+            acquisition_elapsed_ns = prior["elapsed_ns"]
+            earlier_seeds.update(prior["learning_seeds"])
+        else:
+            prior = json.loads((previous / "comparison.json").read_text())
+            baseline_seed = prior["pairs"][0]["seed"]
+            environment = json.loads((previous / f"{baseline_seed}-baseline" / "environment.json").read_text())
+        candidate = json.loads((candidate_dir / "manifest.json").read_text())
+        if acquisition_path.is_file() and prior["skill_sha256"] != candidate["content_sha256"]:
+            raise ValueError("Saved acquisition refers to a different candidate revision")
         if environment.get("model") != model or environment.get("target_url") != args.url:
             raise ValueError("Saved experiment used a different model or target")
         if candidate.get("id") != "sakai-price-input":
@@ -330,16 +344,39 @@ def main():
             raise ValueError("Browser schema changed since candidate validation")
         learning = prior["learning_tokens"]
     else:
+        acquisition_started = monotonic_ns()
         candidate_dir = output / "candidate"
-        candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
-        training, = candidate["source_attempt_ids"]
         def cost(attempt):
             return measured_worker_run(sources[attempt], attempt).tokens
-        learning = {
-            "training": cost(training), "extraction": candidate["extraction_tokens"],
-            "validation": sum(cost(attempt) for attempt in candidate["validation_attempt_ids"]),
+        try:
+            candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
+        except ExplorerDeclined as decision:
+            candidate = None
+            training, = sources
+            learning = {"training": cost(training), "extraction": decision.tokens, "validation": 0}
+        else:
+            training, = candidate["source_attempt_ids"]
+            learning = {
+                "training": cost(training), "extraction": candidate["extraction_tokens"],
+                "validation": sum(cost(attempt) for attempt in candidate["validation_attempt_ids"]),
+            }
+        if not args.resume_training:
+            acquisition_elapsed_ns = monotonic_ns() - acquisition_started
+        acquisition = {
+            "model": model, "target_url": args.url,
+            "status": "active" if candidate else "declined",
+            "learning_seeds": seeds, "skill_sha256": candidate["content_sha256"] if candidate else None,
+            "learning_tokens": learning,
+            "elapsed_ns": acquisition_elapsed_ns,
         }
+        acquisition_path = output / "acquisition.json"
+        acquisition_path.write_text(json.dumps(acquisition, indent=2) + "\n")
         earlier_seeds = set()
+        if args.train_only:
+            print(acquisition_path)
+            return
+        if candidate is None:
+            parser.error(f"No candidate qualified for measurement. See {acquisition_path}")
     first_seed = args.measurement_seed if args.measurement_seed is not None else args.seed + 3
     started = monotonic_ns()
     pairs = measure_sakai(
@@ -357,6 +394,7 @@ def main():
     comparison["assisted_mode"] = "required_component_skill" if args.require_skill else "component_skill"
     comparison["measurement_jobs"] = args.jobs
     comparison["measurement_elapsed_ns"] = measurement_elapsed_ns
+    comparison["acquisition_elapsed_ns"] = acquisition_elapsed_ns
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")
