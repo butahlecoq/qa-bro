@@ -211,7 +211,7 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 
 The adapter rejects stored API-key credentials and removes API-key environment overrides. OpenCode reports completed model steps and token usage. Keep its results separate from Pi and Codex runs.
 
-For a 30-pair batch, serve [Sakai Vue 5.0.0](https://github.com/primefaces/sakai-vue/releases/tag/5.0.0) locally and pass `--url http://127.0.0.1:5173/pages/crud --pairs 30`. Each pair uses a fresh seed for SAKAI-02. Results from that batch characterize this one scenario across synthetic inputs.
+For a 30-pair batch, clone [Sakai Vue 5.0.0](https://github.com/primefaces/sakai-vue/releases/tag/5.0.0) with `git clone --branch 5.0.0 --recurse-submodules https://github.com/primefaces/sakai-vue.git`. In the clone, run `npm ci` and `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort`. Pass `--url http://127.0.0.1:5173/pages/crud --pairs 30` to the OpenCode command. Each pair uses a fresh seed for SAKAI-02. Results from that batch characterize this one scenario across synthetic inputs.
 
 To measure a fresh pair with a previously validated skill, add `--candidate-from /path/to/previous-experiment --measurement-seed 5` and use a new output directory. The harness checks the browser schema, model, target URL, and candidate digest. It keeps reports for separate runs independent.
 
