@@ -30,8 +30,8 @@ class SakaiComparisonTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         root = Path(self.enterContext(TemporaryDirectory()))
-        baseline = SakaiRun(1, "matched", "PASS", ("saved",), 100, 3, 2_000_000_000, mcp_calls=6)
-        assisted = replace(baseline, tokens=75, skill_revision="sha", skill_applied=True, mcp_calls=4)
+        baseline = SakaiRun(1, "matched", "PASS", ("saved",), 100, 3, 2_000_000_000, mcp_calls=6, worker_tool_calls=8)
+        assisted = replace(baseline, tokens=75, skill_revision="sha", skill_applied=True, mcp_calls=4, worker_tool_calls=5)
         source = root / "runs.json"
         source.write_text(json.dumps({
             "pairs": [{"baseline": asdict(baseline), "assisted": asdict(assisted)}],
@@ -43,6 +43,7 @@ class SakaiComparisonTests(unittest.TestCase):
         report = json.loads((output / "comparison.json").read_text())
         self.assertEqual(report["estimated_reuses_to_break_even"], 2)
         self.assertIn("| 1 | PASS | PASS | yes | 100 | 75 |", (output / "report.md").read_text())
+        self.assertIn("| Worker tool calls | 8 | 5 | 3 |", (output / "report.md").read_text())
         self.assertIn("| MCP calls | 6 | 4 | 2 |", (output / "report.md").read_text())
         self.assertIn("| Browser actions | — | — | — |", (output / "report.md").read_text())
 

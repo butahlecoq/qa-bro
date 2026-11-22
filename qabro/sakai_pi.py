@@ -130,9 +130,11 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
 
     def drive(dispatch):
         read_before_action = acted = False
+        tool_calls = 0
 
         def route(request):
-            nonlocal read_before_action, acted
+            nonlocal read_before_action, acted, tool_calls
+            tool_calls += 1
             if request.get("action") == "read_skill":
                 if body is not None and not acted:
                     read_before_action = True
@@ -155,7 +157,7 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
                 pi, model, prompt, cwd, timeout=90, extension=extension,
                 env={**env, "QABRO_SAKAI_TURNS": "12"},
             )
-        return body_text, tokens, calls, session, read_before_action
+        return body_text, tokens, calls, session, read_before_action, tool_calls
 
     return drive
 

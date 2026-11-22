@@ -39,3 +39,25 @@ class SakaiPiTests(unittest.TestCase):
         self.assertEqual(invoked.call_count, 1)
         self.assertNotIn("OPENAI_API_KEY", invoked.call_args.kwargs["env"])
         self.assertNotIn("OPENAI_BASE_URL", invoked.call_args.kwargs["env"])
+
+    def test_worker_counts_inspection_and_skill_reads_as_tool_calls(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from urllib.request import Request, urlopen
+
+        from qabro.sakai_pi import worker_driver
+
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        skill = directory / "SKILL.md"
+        skill.write_text("Use the tested selector.")
+
+        def launch(*_, env, **kwargs):
+            for action in ("read_skill", "inspect", "click"):
+                request = Request(env["QABRO_SAKAI_BRIDGE"], data=json.dumps({"action": action}).encode(),
+                                  headers={"Authorization": "Bearer " + env["QABRO_SAKAI_TOKEN"]})
+                with urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+            return "done", 100, 4, "session"
+
+        result = worker_driver("pi", "fixture", directory, skill, launch=launch)(lambda _: {})
+        self.assertEqual(result[-2:], (True, 3))

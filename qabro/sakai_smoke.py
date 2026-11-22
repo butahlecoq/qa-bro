@@ -56,7 +56,7 @@ def smoke(
         try:
             def record(verdict):
                 if worker_result is not None:
-                    _, tokens, model_calls, session, read_skill = worker_result
+                    _, tokens, model_calls, session, read_skill, tool_calls = worker_result
                     scenario = Path(__file__).resolve().parents[1] / "scenarios/sakai/SAKAI-02.md"
                     journal.append(attempt, "sakai:worker", "worker_metadata", {
                         "session_id": session, "seed": seed, "model": model, "target_url": url,
@@ -69,6 +69,7 @@ def smoke(
                     calls = [payload for _, _, kind, payload in journal.events(attempt) if kind == "tool_start"]
                     journal.append(attempt, "sakai:usage", "worker_usage", {
                         "tokens": tokens, "model_calls": model_calls, "elapsed_ns": monotonic_ns() - started,
+                        "worker_tool_calls": tool_calls,
                         "mcp_calls": len(calls), "browser_actions": sum(not call["read_only"] for call in calls),
                     })
                 result = {"verdict": verdict, "case": case, "attempt": attempt, "target_url": url}

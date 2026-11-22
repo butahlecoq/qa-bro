@@ -28,6 +28,7 @@ class SakaiRun:
     skill_applied: bool = False
     mcp_calls: int | None = None
     browser_actions: int | None = None
+    worker_tool_calls: int | None = None
 
     def __post_init__(self):
         if any(type(value) is not int or value < 0 for value in (
@@ -35,7 +36,7 @@ class SakaiRun:
         )):
             raise ValueError("Sakai runs require measured nonnegative counters")
         if any(value is not None and (type(value) is not int or value < 0)
-               for value in (self.model_calls, self.mcp_calls, self.browser_actions)):
+               for value in (self.model_calls, self.mcp_calls, self.browser_actions, self.worker_tool_calls)):
             raise ValueError("Call and action counters must be nonnegative integers")
         if self.skill_applied and not self.skill_revision:
             raise ValueError("An applied skill must identify its frozen revision")
@@ -70,7 +71,7 @@ def measured_worker_run(database: Path, attempt: str) -> SakaiRun:
         metadata["seed"], sha256(json.dumps(setup, sort_keys=True).encode()).hexdigest(),
         verdict, checks, usage["tokens"], usage["model_calls"], usage["elapsed_ns"],
         metadata.get("skill_sha256"), metadata.get("skill_applied") is True,
-        usage.get("mcp_calls"), usage.get("browser_actions"),
+        usage.get("mcp_calls"), usage.get("browser_actions"), usage.get("worker_tool_calls"),
     )
 
 
@@ -182,6 +183,7 @@ def markdown_report(report: dict) -> str:
         ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),
         ("LLM calls", "model_calls", 1),
         ("Tokens", "tokens", 1),
+        ("Worker tool calls", "worker_tool_calls", 1),
         ("MCP calls", "mcp_calls", 1),
         ("Browser actions", "browser_actions", 1),
     ):
