@@ -124,7 +124,7 @@ def bridge(dispatch):
             thread.join()
 
 
-def worker_driver(pi, model, cwd, skill, *, launch=run_pi, replay_actions=None):
+def worker_driver(pi, model, cwd, skill, *, launch=run_pi, replay_actions=None, batch_fills=False):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
 
@@ -143,8 +143,15 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi, replay_actions=None):
                 if replay_actions is None or acted:
                     return {"error": "Replay is unavailable or creation has already started"}
                 acted = True
-                for step in replay_actions:
-                    result = dispatch({"action": step["tool"], "selector": step["selector"]})
+                actions = [
+                    {"action": step["tool"], "selector": step["selector"]} for step in replay_actions
+                ]
+                if batch_fills:
+                    actions[1:4] = [{"action": "fill_batch", "selectors": [
+                        step["selector"] for step in replay_actions[1:4]
+                    ]}]
+                for action in actions:
+                    result = dispatch(action)
                     if result.get("status") != "accepted":
                         if result.get("status") == "creation_complete":
                             read_before_action = True
@@ -220,7 +227,7 @@ def main():
             directory, args.browse, args.url, case="SAKAI-02", seed=seed,
             series=f"series-{seed}", pi_worker=worker_driver(
                 executable, args.model, output, skill, launch=launch,
-                replay_actions=replay_actions if skill else None,
+                replay_actions=replay_actions if skill else None, batch_fills=args.batch_fills and skill is not None,
             ),
             model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
@@ -292,7 +299,9 @@ def main():
         pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
         extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
-    comparison["assisted_mode"] = "executable_replay" if args.replay_creation else "markdown_skill"
+    comparison["assisted_mode"] = (
+        "batched_replay" if args.batch_fills else "executable_replay" if args.replay_creation else "markdown_skill"
+    )
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")

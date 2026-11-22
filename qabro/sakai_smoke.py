@@ -66,11 +66,25 @@ def smoke(
                         "skill_applied": bool(skill_sha256 and read_skill and position == len(steps) and failure is None),
                         "skill_sha256": skill_sha256,
                     })
-                    calls = [payload for _, _, kind, payload in journal.events(attempt) if kind == "tool_start"]
+                    events = journal.events(attempt)
+                    calls = {event: payload for _, event, kind, payload in events if kind == "tool_start"}
+                    finishes = {event: payload for _, event, kind, payload in events if kind == "tool_finish"}
+                    actions = 0
+                    for event, call in calls.items():
+                        if call["read_only"]:
+                            continue
+                        fields = call["arguments"].get("fields") if call["tool"] == "fill" else None
+                        if fields is not None and finishes.get(
+                            event.removesuffix(":start") + ":finish", {}
+                        ).get("outcome") != Outcome.RETURNED:
+                            actions = None
+                            break
+                        actions += len(fields) if fields is not None else 1
                     journal.append(attempt, "sakai:usage", "worker_usage", {
                         "tokens": tokens, "model_calls": model_calls, "elapsed_ns": monotonic_ns() - started,
                         "worker_tool_calls": tool_calls,
-                        "mcp_calls": len(calls), "browser_actions": sum(not call["read_only"] for call in calls),
+                        "mcp_calls": len(calls),
+                        "browser_actions": actions,
                     })
                 result = {"verdict": verdict, "case": case, "attempt": attempt, "target_url": url}
                 journal.append(attempt, "scenario:finish", "scenario_finish", result)
@@ -185,6 +199,22 @@ def smoke(
                     if position == len(steps):
                         return {"status": "creation_complete"}
                     step, tool, selector, value = steps[position]
+                    if request.get("action") == "fill_batch":
+                        pending = steps[position:position + 3]
+                        if position != 1 or request.get("selectors") != [item[2] for item in pending]:
+                            return {"error": "Batch does not match the pending form fields"}
+                        fill_tool = next(tool for tool in environment["browse"]["tools"] if tool["name"] == "fill")
+                        if "fields" not in fill_tool["inputSchema"]["properties"]:
+                            return {"error": "Installed browse does not support native batch fill"}
+                        position += len(pending)
+                        try:
+                            invoke("form_fields", "fill", {"fields": [
+                                {"selector": target, "value": item_value} for _, _, target, item_value in pending
+                            ]})
+                        except Exception as error:
+                            failure = error
+                            raise
+                        return {"status": "accepted"}
                     if request.get("action") == "inspect":
                         return {"step": step, "tool": tool, "selector": selector}
                     if request.get("action") != tool or request.get("selector") != selector:

@@ -205,3 +205,5 @@ To measure a fresh pair with a previously validated skill, add `--candidate-from
 
 
 Add `--replay-creation` to a separate held-out run to test executable reuse. The worker requests the verified creation sequence in one tool call. The host replays the traced selectors with current inputs and runs the same independent checks. This experiment groups worker requests. It still sends individual browse calls, preserves their trace, and blocks replay once creation has already started.
+
+Add `--batch-fills` to executable replay to send the three adjacent field fills in one native browse request. The installed `fill` schema must support `fields`. The host checks all three values before sending Save separately. The journal counts three browser actions for the one batched MCP call.
