@@ -9,6 +9,12 @@ from math import ceil
 from statistics import mean
 
 
+from qabro.artifacts import ArtifactStore
+from qabro.contract import Observation, Verdict
+from qabro.journal import Journal
+from qabro.sakai_cases import CREATE_CHECKS
+
+
 @dataclass(frozen=True)
 class SakaiRun:
     seed: int
@@ -33,6 +39,39 @@ class SakaiRun:
             raise ValueError("Browser activity counters must be nonnegative integers")
         if self.skill_applied and not self.skill_revision:
             raise ValueError("An applied skill must identify its frozen revision")
+
+
+def measured_worker_run(database: Path, attempt: str) -> SakaiRun:
+    """Read measured counters and independently verified checks from a worker journal."""
+    if not database.is_file():
+        raise ValueError("Expected an existing worker journal")
+    events = Journal(database).events(attempt)
+    entries = {event: payload for _, event, _, payload in events}
+    finish = entries["scenario:finish"]
+    metadata = entries["sakai:worker"]
+    usage = entries["sakai:usage"]
+    setup = {
+        key: metadata[key]
+        for key in ("model", "target_url", "budgets", "browser_schema_sha256", "scenario_sha256")
+    }
+    if finish.get("case") != "SAKAI-02":
+        raise ValueError("Expected a SAKAI-02 worker attempt")
+    verdict = Verdict(finish["verdict"])
+    store = ArtifactStore(database)
+    checks = tuple(
+        payload["step"] for _, _, kind, payload in events
+        if kind == "checkpoint" and payload.get("step") in CREATE_CHECKS
+        and payload.get("outcome") == Observation.MATCH and payload.get("artifact_id")
+        and store.get(payload["artifact_id"]) is not None
+    )
+    if verdict is Verdict.PASS and checks != CREATE_CHECKS:
+        verdict = Verdict.INCONCLUSIVE
+    return SakaiRun(
+        metadata["seed"], sha256(json.dumps(setup, sort_keys=True).encode()).hexdigest(),
+        verdict, checks, usage["tokens"], usage["model_calls"], usage["elapsed_ns"],
+        metadata.get("skill_sha256"), metadata.get("skill_applied") is True,
+        usage.get("mcp_calls"), usage.get("browser_actions"),
+    )
 
 
 def compare_sakai(

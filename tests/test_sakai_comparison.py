@@ -71,3 +71,25 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertEqual([baseline.seed for baseline, _ in pairs], [4, 5])
         with self.assertRaisesRegex(ValueError, "training and validation seeds"):
             measure_sakai(directory, (3,), frozenset({1, 2, 3}), worker)
+
+    def test_worker_export_keeps_costs_when_a_passing_verdict_lacks_evidence(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.journal import Journal
+        from qabro.sakai_comparison import measured_worker_run
+
+        path = Path(self.enterContext(TemporaryDirectory())) / "attempt.sqlite"
+        journal = Journal(path)
+        journal.start("run", "series", "worker")
+        journal.append("run", "sakai:worker", "worker_metadata", {
+            "seed": 4, "model": "fixture", "target_url": "http://127.0.0.1:5173/pages/crud",
+            "budgets": {"model_calls": 10}, "browser_schema_sha256": "schema", "scenario_sha256": "scenario",
+        })
+        journal.append("run", "sakai:usage", "worker_usage", {
+            "tokens": 200, "model_calls": 3, "elapsed_ns": 10, "mcp_calls": 4, "browser_actions": 7,
+        })
+        journal.append("run", "scenario:finish", "scenario_finish", {"case": "SAKAI-02", "verdict": "PASS"})
+        result = measured_worker_run(path, "run")
+        self.assertEqual((result.verdict, result.tokens, result.mcp_calls, result.browser_actions),
+                         ("INCONCLUSIVE", 200, 4, 7))
