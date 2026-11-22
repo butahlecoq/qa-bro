@@ -130,7 +130,12 @@ def compare_sakai(
     investment = sum(learning.values())
     return {
         "pairs": rows, "both_pass": sum(row["both_pass"] for row in rows),
-        "verified_reuses": len(reuses), "learning_tokens": learning,
+        "verified_reuses": len(reuses),
+        "assisted_pass_without_reuse": sum(
+            pair[1].verdict == "PASS" and required_checks <= set(pair[1].checks) and not pair[1].skill_applied
+            for pair in pairs
+        ),
+        "learning_tokens": learning,
         "mean_tokens_saved_per_reuse": saved_per_reuse,
         "estimated_reuses_to_break_even": (
             ceil(investment / saved_per_reuse) if saved_per_reuse and saved_per_reuse > 0 else None
@@ -184,6 +189,7 @@ def markdown_report(report: dict) -> str:
         "# Sakai skill comparison", "",
         f"Verified skill reuses: {report['verified_reuses']} of {len(report['pairs'])} pairs.",
         f"Pairs with all checks passing in both modes: {report['both_pass']}.",
+        f"Assisted passes without using the skill: {report.get('assisted_pass_without_reuse', 0)}.",
         f"Learning tokens: {sum(report['learning_tokens'].values())}.",
         f"Estimated reuses to break even: {estimate if estimate is not None else 'unavailable'}.", "",
         "Performance totals for pairs that passed all required checks and used the skill.", "",

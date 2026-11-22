@@ -124,7 +124,7 @@ def bridge(dispatch):
             thread.join()
 
 
-def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
+def worker_driver(pi, model, cwd, skill, *, launch=run_pi, validate_skill=False):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
 
@@ -148,14 +148,17 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
 
         prompt = (
             "Create the supplied synthetic product using the sakai tool. "
-            "Read the available skill if one is offered. Inspect visible controls and decide which action to take next. "
+            "Inspect visible controls and decide which action to take next. "
+            "If a skill is offered, read it only when it could resolve an interaction you are unsure about. "
             "For fill, send one selector. For independent visible fields you choose to fill together, "
             "send fill_many with a selectors array. The host inserts their supplied values. "
             "The host runs all checks automatically, including dialog_open; do not stop to run them. "
             "An accepted response means continue to the next step. If unsure, inspect again. "
             "Stop only on creation_complete or if the tool says creation is stopped."
         )
-        prompt += "\nSkill available: " + ("yes" if body is not None else "no")
+        prompt += "\nAvailable component skill: " + ("Sakai Price input" if body is not None else "none")
+        if validate_skill:
+            prompt += "\nThis is a validation attempt. Read the Price skill before filling Price."
         with bridge(route) as env:
             body_text, tokens, calls, session = launch(
                 pi, model, prompt, cwd, timeout=90, extension=extension,
@@ -194,7 +197,7 @@ def main():
         output.mkdir(mode=0o700)
 
 
-    def run_worker(seed, skill):
+    def run_worker(seed, skill, *, validate_skill=False):
         label = "assisted" if skill else "baseline"
         directory = output / f"{seed}-{label}"
         if args.resume_training and seed == args.seed and skill is None:
@@ -207,7 +210,7 @@ def main():
         result = smoke(
             directory, args.browse, args.url, case="SAKAI-02", seed=seed,
             series=f"series-{seed}", pi_worker=worker_driver(
-                executable, args.model, output, skill, launch=launch,
+                executable, args.model, output, skill, launch=launch, validate_skill=validate_skill,
             ),
             model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
@@ -224,7 +227,7 @@ def main():
 
     sources = {}
     def record_worker(seed, skill):
-        result = run_worker(seed, skill)
+        result = run_worker(seed, skill, validate_skill=skill is not None)
         sources[result[1]] = result[0]
         return result
 

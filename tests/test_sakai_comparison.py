@@ -18,6 +18,7 @@ class SakaiComparisonTests(unittest.TestCase):
         )
         self.assertEqual(report["both_pass"], 2)
         self.assertEqual(report["verified_reuses"], 1)
+        self.assertEqual(report["assisted_pass_without_reuse"], 1)
         self.assertEqual(report["estimated_reuses_to_break_even"], 2)
         self.assertEqual(report["observed_net_tokens_saved"], -40)
 
