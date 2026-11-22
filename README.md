@@ -232,7 +232,19 @@ In the 30-pair local Sakai run with OpenCode and subscription-backed `openai/gpt
 
 Acquisition cost 37,389 tokens. The assisted arm consumed 158,545 more tokens including acquisition, with no measured break-even. [30-pair results](https://github.com/butahlecoq/qa-bro/issues/16#issuecomment-7078670471)
 
-In a separate six-case batch, three browser workers finished in 70.27 seconds versus 200.58 seconds with one worker. Both modes passed all checks. Median per-case latency was 32.37 versus 33.16 seconds. The 2.85× ratio measures aggregate throughput with concurrent workers. [Six-case throughput results](https://github.com/butahlecoq/qa-bro/issues/16#issuecomment-7078725857)
+The throughput benchmark ran the same 30 held-out SAKAI-02 inputs with one worker and with three independent workers. It alternated arm order over six blocks of five cases. Both arms used fresh OpenCode sessions, fresh tabs, and an empty skill catalog.
+
+| Metric | One worker | Three workers |
+| --- | ---: | ---: |
+| Batch wall time, sum of six blocks | 978.128 s | 419.362 s |
+| Cases passing all six checks | 30/30 | 30/30 |
+| Median per-case latency | 31.855 s | 34.292 s |
+| Tokens | 232,884 | 243,180 |
+| Completed model steps | 192 | 199 |
+| Browser MCP calls | 672 | 678 |
+| Browser actions | 330 | 330 |
+
+Concurrency increased aggregate throughput by 2.33× on this workload. Per-case median latency and aggregate token usage increased.
 
 
 
