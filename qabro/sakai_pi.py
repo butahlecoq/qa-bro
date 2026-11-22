@@ -144,8 +144,10 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
         prompt = (
             "Create the supplied synthetic product using the sakai tool. "
             "Read the available skill if one is offered. Inspect the UI if you need a selector. "
-            "Fill the three inputs and save once. The host verifies the result. "
-            "Stop when creation completes."
+            "For fill, send only action and selector: the host inserts the supplied value. "
+            "The host runs all checks automatically, including dialog_open; do not stop to run them. "
+            "An accepted response means continue to the next step. If unsure, inspect again. "
+            "Stop only on creation_complete or if the tool says creation is stopped."
         )
         prompt += "\nSkill available: " + ("yes" if body is not None else "no")
         with bridge(route) as env:
@@ -170,7 +172,11 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--experiment", action="store_true", help="Train, validate, and measure five A/B pairs")
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
+    parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
+    parser.add_argument("--measurement-seed", type=int)
     args = parser.parse_args()
+    if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
+        parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
     if args.resume_training and not args.experiment:
         parser.error("--resume-training requires --experiment")
     if not 1 <= args.pairs <= 5:
@@ -218,18 +224,44 @@ def main():
         return text, tokens
 
     seeds = tuple(range(args.seed, args.seed + 3))
-    candidate_dir = output / "candidate"
-    candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
-    training, = candidate["source_attempt_ids"]
-    cost = lambda attempt: measured_worker_run(sources[attempt], attempt).tokens
+    if args.candidate_from:
+        previous = args.candidate_from.resolve()
+        candidate_dir = previous / "candidate"
+        candidate = json.loads((candidate_dir / "manifest.json").read_text())
+        prior = json.loads((previous / "comparison.json").read_text())
+        earlier_seeds = {
+            int(path.parent.name.removesuffix("-baseline").removesuffix("-assisted"))
+            for path in previous.glob("*/smoke.json")
+        }
+        baseline_seed = prior["pairs"][0]["seed"]
+        environment = json.loads((previous / f"{baseline_seed}-baseline" / "environment.json").read_text())
+        model = f"codex/{args.model}" if args.codex else args.model
+        if environment.get("model") != model or environment.get("target_url") != args.url:
+            raise ValueError("Saved experiment used a different model or target")
+        if candidate.get("status") != "active":
+            raise ValueError("Expected a previously validated candidate")
+        if candidate["browser_capabilities_sha256"] != inspect(args.browse)["schema_sha256"]:
+            raise ValueError("Browser schema changed since candidate validation")
+        learning = prior["learning_tokens"]
+    else:
+        candidate_dir = output / "candidate"
+        candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
+        training, = candidate["source_attempt_ids"]
+        def cost(attempt):
+            return measured_worker_run(sources[attempt], attempt).tokens
+        learning = {
+            "training": cost(training), "extraction": candidate["extraction_tokens"],
+            "validation": sum(cost(attempt) for attempt in candidate["validation_attempt_ids"]),
+        }
+        earlier_seeds = set()
+    first_seed = args.measurement_seed if args.measurement_seed is not None else args.seed + 3
     pairs = measure_sakai(
-        candidate_dir, tuple(range(args.seed + 3, args.seed + 3 + args.pairs)), frozenset(seeds),
+        candidate_dir, tuple(range(first_seed, first_seed + args.pairs)), frozenset(seeds) | earlier_seeds,
         lambda seed, skill: measured_worker_run(*run_worker(seed, skill)),
     )
     comparison = compare_sakai(
-        pairs, frozenset(CREATE_CHECKS), training_tokens=cost(training),
-        extraction_tokens=candidate["extraction_tokens"],
-        validation_tokens=sum(cost(attempt) for attempt in candidate["validation_attempt_ids"]),
+        pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
+        extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
