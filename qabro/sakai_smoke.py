@@ -193,7 +193,14 @@ def smoke(
                     try:
                         if step == "save":
                             check("entered_fields", fields, [product, description, data.price_cents])
-                        if tool == "click":
+                        if step == "save":
+                            try:
+                                click(step, selector)
+                            except TimeoutError:
+                                journal.append(attempt, "sakai:save_uncertain", "recovery", {
+                                    "step": "save", "strategy": "verify_dialog_and_read_back",
+                                })
+                        elif tool == "click":
                             click(step, selector)
                         else:
                             fill(step, selector, value)
