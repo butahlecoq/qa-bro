@@ -14,7 +14,7 @@ from threading import Thread
 
 from qabro.sakai_cases import CREATE_CHECKS
 from qabro.sakai_comparison import compare_sakai, markdown_report, measure_sakai, measured_worker_run
-from qabro.sakai_training import train_sakai
+from qabro.sakai_training import explorer_input, train_sakai
 from qabro.sakai_smoke import PUBLIC_URL, smoke
 
 
@@ -124,7 +124,7 @@ def bridge(dispatch):
             thread.join()
 
 
-def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
+def worker_driver(pi, model, cwd, skill, *, launch=run_pi, replay_actions=None):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
 
@@ -136,9 +136,20 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
             nonlocal read_before_action, acted, tool_calls
             tool_calls += 1
             if request.get("action") == "read_skill":
-                if body is not None and not acted:
+                if body is not None and not acted and replay_actions is None:
                     read_before_action = True
                 return {"skill": body}
+            if request.get("action") == "replay":
+                if replay_actions is None or acted:
+                    return {"error": "Replay is unavailable or creation has already started"}
+                acted = True
+                for step in replay_actions:
+                    result = dispatch({"action": step["tool"], "selector": step["selector"]})
+                    if result.get("status") != "accepted":
+                        if result.get("status") == "creation_complete":
+                            read_before_action = True
+                        return result
+                return {"error": "Replay did not complete creation"}
             if request.get("action") in {"click", "fill"}:
                 acted = True
             return dispatch(request)
@@ -152,6 +163,7 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
             "Stop only on creation_complete or if the tool says creation is stopped."
         )
         prompt += "\nSkill available: " + ("yes" if body is not None else "no")
+        prompt += "\nExecutable replay available: " + ("yes. Call replay once." if replay_actions else "no.")
         with bridge(route) as env:
             body_text, tokens, calls, session = launch(
                 pi, model, prompt, cwd, timeout=90, extension=extension,
@@ -176,9 +188,12 @@ def main():
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
+    parser.add_argument("--replay-creation", action="store_true", help="Measure one-call creation replay from a validated trace")
     args = parser.parse_args()
     if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
         parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
+    if args.replay_creation and not args.candidate_from:
+        parser.error("--replay-creation requires --candidate-from")
     if args.resume_training and not args.experiment:
         parser.error("--resume-training requires --experiment")
     if not 1 <= args.pairs <= 5:
@@ -188,6 +203,8 @@ def main():
     output = args.output.resolve()
     if not args.resume_training:
         output.mkdir(mode=0o700)
+
+    replay_actions = None
 
     def run_worker(seed, skill):
         label = "assisted" if skill else "baseline"
@@ -201,7 +218,10 @@ def main():
             return directory / "smoke.sqlite", saved["attempt"]
         result = smoke(
             directory, args.browse, args.url, case="SAKAI-02", seed=seed,
-            series=f"series-{seed}", pi_worker=worker_driver(executable, args.model, output, skill, launch=launch),
+            series=f"series-{seed}", pi_worker=worker_driver(
+                executable, args.model, output, skill, launch=launch,
+                replay_actions=replay_actions if skill else None,
+            ),
             model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
         return directory / "smoke.sqlite", result["attempt"]
@@ -245,6 +265,13 @@ def main():
         if candidate["browser_capabilities_sha256"] != inspect(args.browse)["schema_sha256"]:
             raise ValueError("Browser schema changed since candidate validation")
         learning = prior["learning_tokens"]
+        if args.replay_creation:
+            source_id, = candidate["source_attempt_ids"]
+            source_path = next(
+                path for path in previous.glob("*/smoke.json")
+                if json.loads(path.read_text())["attempt"] == source_id
+            )
+            replay_actions = explorer_input(source_path.with_name("smoke.sqlite"), source_id)["actions"]
     else:
         candidate_dir = output / "candidate"
         candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
@@ -265,6 +292,7 @@ def main():
         pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
         extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
+    comparison["assisted_mode"] = "executable_replay" if args.replay_creation else "markdown_skill"
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")

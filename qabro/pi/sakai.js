@@ -11,7 +11,7 @@ export default function (pi) {
     name: "sakai", label: "Sakai CRUD",
     description: "Read the offered skill, inspect the current creation step, or perform it with a selector.",
     parameters: Type.Object({
-      action: StringEnum(["inspect", "click", "fill", "read_skill"]),
+      action: StringEnum(["inspect", "click", "fill", "read_skill", "replay"]),
       selector: Type.Optional(Type.String()),
     }, { additionalProperties: false }),
     async execute(_id, args, signal) {

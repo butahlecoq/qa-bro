@@ -20,9 +20,9 @@ def main():
             result = {}
         elif method == "tools/list":
             result = {"tools": [{
-                "name": "sakai", "description": "Read the skill, inspect the next step, or act with its selector.",
+                "name": "sakai", "description": "Read the skill, inspect, act with a selector, or request one-call replay when available.",
                 "inputSchema": {"type": "object", "properties": {
-                    "action": {"enum": ["inspect", "click", "fill", "read_skill"], "type": "string"},
+                    "action": {"enum": ["inspect", "click", "fill", "read_skill", "replay"], "type": "string"},
                     "selector": {"type": "string"},
                 }, "required": ["action"], "additionalProperties": False},
             }]}

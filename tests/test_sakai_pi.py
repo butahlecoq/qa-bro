@@ -61,3 +61,33 @@ class SakaiPiTests(unittest.TestCase):
 
         result = worker_driver("pi", "fixture", directory, skill, launch=launch)(lambda _: {})
         self.assertEqual(result[-2:], (True, 3))
+
+    def test_trace_replay_dispatches_ordered_actions_only_once(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.sakai_pi import worker_driver
+
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        calls = []
+        actions = [{"tool": "click", "selector": "#new"}, {"tool": "click", "selector": "#save"}]
+
+        def launch(*_, env, **kwargs):
+            def replay():
+                request = Request(env["QABRO_SAKAI_BRIDGE"], data=b'{"action":"replay"}',
+                                  headers={"Authorization": "Bearer " + env["QABRO_SAKAI_TOKEN"]})
+                with urlopen(request, timeout=2) as response:
+                    return json.load(response)
+            self.assertEqual(replay(), {"status": "creation_complete"})
+            self.assertIn("error", replay())
+            return "done", 100, 2, "session"
+
+        def dispatch(request):
+            calls.append(request)
+            return {"status": "creation_complete" if request["selector"] == "#save" else "accepted"}
+
+        result = worker_driver(
+            "pi", "fixture", directory, None, launch=launch, replay_actions=actions,
+        )(dispatch)
+        self.assertEqual(result[-2:], (True, 2))
+        self.assertEqual(calls, [{"action": "click", "selector": "#new"}, {"action": "click", "selector": "#save"}])
