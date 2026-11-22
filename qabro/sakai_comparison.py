@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 from math import ceil
-from statistics import mean
+from statistics import mean, median
 
 
 from qabro.artifacts import ArtifactStore
@@ -195,10 +195,27 @@ def markdown_report(report: dict) -> str:
         f"({learning['training']} training, {learning['extraction']} extraction, {learning['validation']} validation).",
         f"Net tokens saved across all pairs after learning: {report['observed_net_tokens_saved']}.",
         f"Estimated reuses to break even: {estimate if estimate is not None else 'unavailable'}.", "",
+        "Elapsed time for matched pairs with all required checks passing.", "",
+        "| Mode | Runs | Median (s) | Range (s) |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    matched = [row for row in report["pairs"] if row["both_pass"]]
+    medians = {}
+    for mode in ("baseline", "assisted"):
+        seconds = [row[mode]["elapsed_ns"] / 1_000_000_000 for row in matched]
+        if seconds:
+            medians[mode] = median(seconds)
+            lines.append(f"| {mode} | {len(seconds)} | {medians[mode]:.3f} | {min(seconds):.3f}–{max(seconds):.3f} |")
+        else:
+            lines.append(f"| {mode} | 0 | — | — |")
+    if medians.get("assisted") and medians.get("baseline"):
+        lines.extend(["", f"Observed median speed ratio (baseline / assisted): {medians['baseline'] / medians['assisted']:.2f}×."])
+    lines.extend([
+        "",
         "Performance totals for pairs that passed all required checks and used the skill.", "",
         "| Metric | Without skill | With skill | Saved |",
         "| --- | ---: | ---: | ---: |",
-    ]
+    ])
     pairs = [row for row in report["pairs"] if row["both_pass"] and row["skill_applied"]]
     for label, key, scale in (
         ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),

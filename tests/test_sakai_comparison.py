@@ -46,6 +46,8 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertIn("| 1 | baseline | PASS | saved | no | 2.000 | 100 | 3 | 8 | 6 | — |", (output / "report.md").read_text())
         self.assertIn("| 1 | assisted | PASS | saved | yes | 2.000 | 75 | 3 | 5 | 4 | — |", (output / "report.md").read_text())
         self.assertIn("50 (10 training, 10 extraction, 30 validation)", (output / "report.md").read_text())
+        self.assertIn("| baseline | 1 | 2.000 | 2.000–2.000 |", (output / "report.md").read_text())
+        self.assertIn("Observed median speed ratio (baseline / assisted): 1.00×.", (output / "report.md").read_text())
         self.assertIn("| Time inside browse calls (s) | 0.800 | 0.500 | 0.300 |", (output / "report.md").read_text())
         self.assertIn("| Worker tool calls | 8 | 5 | 3 |", (output / "report.md").read_text())
         self.assertIn("| MCP calls | 6 | 4 | 2 |", (output / "report.md").read_text())
