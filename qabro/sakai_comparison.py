@@ -16,12 +16,17 @@ class SakaiRun:
     elapsed_ns: int
     skill_revision: str | None = None
     skill_applied: bool = False
+    mcp_calls: int | None = None
+    browser_actions: int | None = None
 
     def __post_init__(self):
         if any(type(value) is not int or value < 0 for value in (
             self.tokens, self.model_calls, self.elapsed_ns,
         )):
             raise ValueError("Sakai runs require measured nonnegative counters")
+        if any(value is not None and (type(value) is not int or value < 0)
+               for value in (self.mcp_calls, self.browser_actions)):
+            raise ValueError("Browser activity counters must be nonnegative integers")
         if self.skill_applied and not self.skill_revision:
             raise ValueError("An applied skill must identify its frozen revision")
 
@@ -88,9 +93,34 @@ def markdown_report(report: dict) -> str:
         f"Pairs with all checks passing in both modes: {report['both_pass']}.",
         f"Learning tokens: {sum(report['learning_tokens'].values())}.",
         f"Estimated reuses to break even: {estimate if estimate is not None else 'unavailable'}.", "",
+        "Performance totals for pairs that passed all required checks and used the skill.", "",
+        "| Metric | Without skill | With skill | Saved |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    pairs = [row for row in report["pairs"] if row["both_pass"] and row["skill_applied"]]
+    for label, key, scale in (
+        ("Elapsed time (s)", "elapsed_ns", 1_000_000_000),
+        ("LLM calls", "model_calls", 1),
+        ("Tokens", "tokens", 1),
+        ("MCP calls", "mcp_calls", 1),
+        ("Browser actions", "browser_actions", 1),
+    ):
+        totals = []
+        for mode in ("baseline", "assisted"):
+            values = [row[mode][key] for row in pairs]
+            totals.append(sum(values) if values and None not in values else None)
+        baseline, assisted = totals
+        saved = baseline - assisted if baseline is not None and assisted is not None else None
+        cells = [
+            "—" if value is None else str(value) if scale == 1 else f"{value / scale:.3f}"
+            for value in (*totals, saved)
+        ]
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    lines.extend([
+        "", "All measurement pairs", "",
         "| Seed | Baseline | Assisted | Skill applied | Baseline tokens | Assisted tokens |",
         "| --- | --- | --- | --- | ---: | ---: |",
-    ]
+    ])
     for row in report["pairs"]:
         baseline, assisted = row["baseline"], row["assisted"]
         lines.append(
