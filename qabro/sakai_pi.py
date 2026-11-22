@@ -11,8 +11,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import Thread
+from tempfile import TemporaryDirectory
 
 from qabro.sakai_cases import CREATE_CHECKS
+from qabro.opencode_metrics import summarize
 from qabro.sakai_comparison import compare_sakai, markdown_report, measure_sakai, measured_worker_run
 from qabro.sakai_training import train_sakai
 from qabro.sakai_smoke import PRICE, PUBLIC_URL, smoke
@@ -82,6 +84,62 @@ def run_codex(executable, model, prompt, cwd, *, timeout, extension=None, env=No
     return body, usage["input_tokens"] + usage["output_tokens"], None, session
 
 
+def run_opencode(executable, model, prompt, cwd, *, timeout, extension=None, env=None):
+    if model != "openai/gpt-6-luna":
+        raise ValueError("The OpenCode adapter uses subscription model openai/gpt-6-luna")
+    environment = {**os.environ, **(env or {})}
+    for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT"):
+        environment.pop(key, None)
+    environment["OPENCODE_DISABLE_PLUGIN"] = "true"
+    environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "true"
+    config = {
+        "permission": {"*": "deny"},
+        "share": "disabled",
+        "autoupdate": False,
+        "enabled_providers": ["openai"],
+    }
+    if extension:
+        shim = Path(__file__).with_name("sakai_codex_mcp.py")
+        config["mcp"] = {"qabro": {"type": "local", "command": [sys.executable, str(shim)]}}
+        config["permission"]["qabro_*"] = "allow"
+    with TemporaryDirectory(prefix="opencode-", dir=cwd) as workspace:
+        environment["OPENCODE_CONFIG_DIR"] = workspace
+        (Path(workspace) / "opencode.json").write_text(json.dumps(config))
+        auth = subprocess.run(
+            [executable, "auth", "export"], cwd=workspace, env=environment,
+            timeout=10, capture_output=True, text=True,
+        )
+        try:
+            accounts = json.loads(auth.stdout) if auth.returncode == 0 else []
+            oauth = any(
+                account["integrationID"] == "openai" and account["active"]
+                and account["value"]["type"] == "oauth"
+                and account["value"]["methodID"] == "chatgpt-token-sharing"
+                for account in accounts
+            )
+        except (TypeError, ValueError, KeyError):
+            oauth = False
+        if not oauth:
+            raise RuntimeError("OpenCode requires an active OpenAI OAuth sign-in")
+        del accounts, auth
+        result = subprocess.run(
+            [executable, "--standalone", "run", "--archived", "--auto", "--format", "json", "-m", model, prompt],
+            cwd=workspace, env=environment, timeout=timeout, capture_output=True, text=True,
+        )
+    events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    finishes = [event["part"] for event in events if event["type"] == "step_finish"]
+    if result.returncode or not finishes or any(event["type"] == "error" for event in events):
+        raise RuntimeError("OpenCode did not complete the Luna session")
+    usage = summarize(result.stdout.splitlines())
+    tokens = sum(usage[counter] for counter in (
+        "input_tokens", "output_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens",
+    ))
+    body = "\n".join(event["part"]["text"] for event in events if event["type"] == "text").strip()
+    if body.startswith("```json\n") and body.endswith("\n```"):
+        body = body.removeprefix("```json\n").removesuffix("\n```")
+    return body, tokens, len(finishes), events[0]["sessionID"]
+
+
 @contextmanager
 def bridge(dispatch):
     secret = token_urlsafe()
@@ -143,6 +201,8 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi, validate_skill=False)
             if (request.get("action") == "fill" and request.get("selector") == PRICE) or (
                 request.get("action") == "fill_many" and isinstance(targets, list) and PRICE in targets
             ):
+                if validate_skill and not read_before_price:
+                    return {"error": "Read the candidate before filling Price in this validation attempt"}
                 price_started = True
             return dispatch(request)
 
@@ -173,7 +233,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--pi", default="pi")
-    parser.add_argument("--codex", help="Use the signed-in Codex CLI instead of Pi")
+    harness = parser.add_mutually_exclusive_group()
+    harness.add_argument("--opencode", help="Use the subscription-backed OpenCode CLI")
+    harness.add_argument("--codex", help="Use the signed-in Codex CLI instead of Pi")
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--browse", default="browse")
     parser.add_argument("--model", required=True)
@@ -190,8 +252,9 @@ def main():
         parser.error("--resume-training requires --experiment")
     if not 1 <= args.pairs <= 5:
         parser.error("--pairs expects between one and five pairs")
-    launch = run_codex if args.codex else run_pi
-    executable = args.codex or args.pi
+    launch = run_opencode if args.opencode else run_codex if args.codex else run_pi
+    executable = args.opencode or args.codex or args.pi
+    model = f"opencode/{args.model}" if args.opencode else f"codex/{args.model}" if args.codex else args.model
     output = args.output.resolve()
     if not args.resume_training:
         output.mkdir(mode=0o700)
@@ -203,7 +266,6 @@ def main():
         if args.resume_training and seed == args.seed and skill is None:
             saved = json.loads((directory / "smoke.json").read_text())
             environment = json.loads((directory / "environment.json").read_text())
-            model = f"codex/{args.model}" if args.codex else args.model
             if environment.get("model") != model or environment.get("target_url") != args.url:
                 raise ValueError("Saved training run used a different model or target")
             return directory / "smoke.sqlite", saved["attempt"]
@@ -212,7 +274,7 @@ def main():
             series=f"series-{seed}", pi_worker=worker_driver(
                 executable, args.model, output, skill, launch=launch, validate_skill=validate_skill,
             ),
-            model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
+            model=model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
         return directory / "smoke.sqlite", result["attempt"]
 
@@ -247,7 +309,6 @@ def main():
         }
         baseline_seed = prior["pairs"][0]["seed"]
         environment = json.loads((previous / f"{baseline_seed}-baseline" / "environment.json").read_text())
-        model = f"codex/{args.model}" if args.codex else args.model
         if environment.get("model") != model or environment.get("target_url") != args.url:
             raise ValueError("Saved experiment used a different model or target")
         if candidate.get("id") != "sakai-price-input":

@@ -61,3 +61,47 @@ class SakaiPiTests(unittest.TestCase):
 
         result = worker_driver("pi", "fixture", directory, skill, launch=launch)(lambda _: {})
         self.assertEqual(result[-2:], (True, 3))
+
+    def test_opencode_refuses_stored_api_key_before_model_invocation(self):
+        from pathlib import Path
+        from subprocess import CompletedProcess
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from qabro.sakai_pi import run_opencode
+
+        workspace = Path(self.enterContext(TemporaryDirectory()))
+        accounts = [{"integrationID": "openai", "active": True, "value": {"type": "api"}}]
+        with patch("qabro.sakai_pi.subprocess.run", return_value=CompletedProcess(
+            ["opencode", "auth", "export"], 0, json.dumps(accounts), "",
+        )) as invoked:
+            with self.assertRaisesRegex(RuntimeError, "active OpenAI OAuth"):
+                run_opencode("opencode", "openai/gpt-6-luna", "prompt", workspace, timeout=5,
+                             env={"OPENAI_API_KEY": "test"})
+        self.assertEqual(invoked.call_count, 1)
+        self.assertNotIn("OPENAI_API_KEY", invoked.call_args.kwargs["env"])
+
+    def test_opencode_reports_session_usage_from_chatgpt_oauth(self):
+        from pathlib import Path
+        from subprocess import CompletedProcess
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from qabro.sakai_pi import run_opencode
+
+        workspace = Path(self.enterContext(TemporaryDirectory()))
+        accounts = [{"integrationID": "openai", "active": True,
+                     "value": {"type": "oauth", "methodID": "chatgpt-token-sharing"}}]
+        events = [
+            {"type": "step_start", "timestamp": 1, "sessionID": "session"},
+            {"type": "text", "timestamp": 2, "sessionID": "session", "part": {"text": "OK"}},
+            {"type": "step_finish", "timestamp": 3, "sessionID": "session", "part": {
+                "tokens": {"input": 12, "output": 2, "reasoning": 1, "cache": {"read": 5, "write": 0}},
+            }},
+        ]
+        with patch("qabro.sakai_pi.subprocess.run", side_effect=[
+            CompletedProcess([], 0, json.dumps(accounts), ""),
+            CompletedProcess([], 0, "\n".join(map(json.dumps, events)), ""),
+        ]):
+            result = run_opencode("opencode", "openai/gpt-6-luna", "prompt", workspace, timeout=5)
+        self.assertEqual(result, ("OK", 20, 1, "session"))

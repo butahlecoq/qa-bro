@@ -201,6 +201,16 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 
 One pair is a smoke experiment. Omit `--pairs 1` for five pairs. Codex reports aggregate input and output tokens for the session, including cached input in the input count. The experiment leaves the LLM call count blank because Codex CLI does not report the number of provider calls. Keep Codex and Pi results separate.
 
+To run the same experiment through OpenCode with a ChatGPT subscription, use an active OpenAI OAuth sign-in and run the following command.
+
+```sh
+python -m qabro.sakai_pi /path/to/new-private-output \
+  --opencode "$(command -v opencode)" --model openai/gpt-6-luna \
+  --browse "$(command -v browse)" --experiment --pairs 1
+```
+
+The adapter rejects stored API-key credentials and removes API-key environment overrides. OpenCode reports completed model steps and token usage. Keep its results separate from Pi and Codex runs.
+
 To measure a fresh pair with a previously validated skill, add `--candidate-from /path/to/previous-experiment --measurement-seed 5` and use a new output directory. The harness checks the browser schema, model, target URL, and candidate digest. It keeps reports for separate runs independent.
 
 Validation asks the worker to consult the candidate. During measurement, the worker can skip the skill when live inspection gives it enough information. The report counts those passes separately from verified skill reuse. In both modes, the worker selects visible fields and the harness validates and executes any batch.
