@@ -20,3 +20,26 @@ class SakaiComparisonTests(unittest.TestCase):
         self.assertEqual(report["verified_reuses"], 1)
         self.assertEqual(report["estimated_reuses_to_break_even"], 2)
         self.assertEqual(report["observed_net_tokens_saved"], -40)
+
+    def test_manifest_command_writes_the_two_private_report_formats(self):
+        import json
+        import subprocess
+        import sys
+        from dataclasses import asdict
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        root = Path(self.enterContext(TemporaryDirectory()))
+        baseline = SakaiRun(1, "matched", "PASS", ("saved",), 100, 3, 100)
+        assisted = replace(baseline, tokens=75, skill_revision="sha", skill_applied=True)
+        source = root / "runs.json"
+        source.write_text(json.dumps({
+            "pairs": [{"baseline": asdict(baseline), "assisted": asdict(assisted)}],
+            "required_checks": ["saved"],
+            "learning": {"training_tokens": 10, "extraction_tokens": 10, "validation_tokens": 30},
+        }))
+        output = root / "report"
+        subprocess.run([sys.executable, "-m", "qabro.sakai_comparison", str(source), str(output)], check=True)
+        report = json.loads((output / "comparison.json").read_text())
+        self.assertEqual(report["estimated_reuses_to_break_even"], 2)
+        self.assertIn("| 1 | PASS | PASS | yes | 100 | 75 |", (output / "report.md").read_text())

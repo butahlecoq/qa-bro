@@ -1,6 +1,6 @@
 """Compare paired Sakai runs while charging skill acquisition and reuse costs."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from math import ceil
 from statistics import mean
 
@@ -58,6 +58,7 @@ def compare_sakai(
             "seed": baseline.seed, "baseline_verdict": baseline.verdict,
             "assisted_verdict": assisted.verdict, "both_pass": both_pass,
             "skill_applied": assisted.skill_applied,
+            "baseline": asdict(baseline), "assisted": asdict(assisted),
             "tokens_saved": baseline.tokens - assisted.tokens,
             "model_calls_saved": baseline.model_calls - assisted.model_calls,
             "elapsed_ns_saved": baseline.elapsed_ns - assisted.elapsed_ns,
@@ -73,4 +74,49 @@ def compare_sakai(
             ceil(investment / saved_per_reuse) if saved_per_reuse and saved_per_reuse > 0 else None
         ),
         "observed_net_tokens_saved": sum(row["tokens_saved"] for row in rows) - investment,
+        "verified_net_tokens_saved": sum(
+            row["tokens_saved"] if row["both_pass"] and row["skill_applied"] else -row["assisted"]["tokens"]
+            for row in rows
+        ) - investment,
     }
+
+def markdown_report(report: dict) -> str:
+    estimate = report["estimated_reuses_to_break_even"]
+    lines = [
+        "# Sakai skill comparison", "",
+        f"Verified skill reuses: {report['verified_reuses']} of {len(report['pairs'])} pairs.",
+        f"Pairs with all checks passing in both modes: {report['both_pass']}.",
+        f"Learning tokens: {sum(report['learning_tokens'].values())}.",
+        f"Estimated reuses to break even: {estimate if estimate is not None else 'unavailable'}.", "",
+        "| Seed | Baseline | Assisted | Skill applied | Baseline tokens | Assisted tokens |",
+        "| --- | --- | --- | --- | ---: | ---: |",
+    ]
+    for row in report["pairs"]:
+        baseline, assisted = row["baseline"], row["assisted"]
+        lines.append(
+            f"| {row['seed']} | {baseline['verdict']} | {assisted['verdict']} | "
+            f"{'yes' if row['skill_applied'] else 'no'} | {baseline['tokens']} | {assisted['tokens']} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", type=Path)
+    parser.add_argument("output", type=Path, help="New directory for the comparison artifacts")
+    args = parser.parse_args()
+    try:
+        manifest = json.loads(args.manifest.read_text())
+        report = compare_sakai(
+            [(SakaiRun(**pair["baseline"]), SakaiRun(**pair["assisted"])) for pair in manifest["pairs"]],
+            frozenset(manifest["required_checks"]), **manifest["learning"],
+        )
+        args.output.mkdir(mode=0o700)
+        (args.output / "comparison.json").write_text(json.dumps(report, indent=2) + "\n")
+        (args.output / "report.md").write_text(markdown_report(report))
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        parser.error(str(error))
