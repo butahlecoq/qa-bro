@@ -9,9 +9,9 @@ export default function (pi) {
   });
   pi.registerTool({
     name: "sakai", label: "Sakai CRUD",
-    description: "Read the offered skill, inspect the current creation step, or perform it with a selector.",
+    description: "Read the offered skill, inspect visible Sakai controls, or perform it with a selector.",
     parameters: Type.Object({
-      action: StringEnum(["inspect", "click", "fill", "read_skill", "replay"]),
+      action: StringEnum(["inspect", "click", "fill", "read_skill"]),
       selector: Type.Optional(Type.String()),
     }, { additionalProperties: false }),
     async execute(_id, args, signal) {

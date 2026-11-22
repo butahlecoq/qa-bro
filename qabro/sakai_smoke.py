@@ -199,6 +199,7 @@ def smoke(
                     ("price", "fill", PRICE, price),
                     ("save", "click", f'{DIALOG} button:has-text("Save")', None),
                 ]
+                controls = dict(zip(("New", "Name", "Description", "Price", "Save"), steps))
                 position = requests = 0
                 failure = None
 
@@ -209,27 +210,38 @@ def smoke(
                         return {"error": "Creation is stopped"}
                     if position == len(steps):
                         return {"status": "creation_complete"}
-                    step, tool, selector, value = steps[position]
-                    if request.get("action") == "fill_batch":
-                        pending = steps[position:position + 3]
-                        if position != 1 or request.get("selectors") != [item[2] for item in pending]:
-                            return {"error": "Batch does not match the pending form fields"}
-                        fill_tool = next(tool for tool in environment["browse"]["tools"] if tool["name"] == "fill")
-                        if "fields" not in fill_tool["inputSchema"]["properties"]:
-                            return {"error": "Installed browse does not support native batch fill"}
-                        position += len(pending)
-                        try:
-                            invoke("form_fields", "fill", {"fields": [
-                                {"selector": target, "value": item_value} for _, _, target, item_value in pending
-                            ]})
-                        except Exception as error:
-                            failure = error
-                            raise
-                        return {"status": "accepted"}
                     if request.get("action") == "inspect":
-                        return {"step": step, "tool": tool, "selector": selector}
-                    if request.get("action") != tool or request.get("selector") != selector:
-                        return {"error": "Action does not match the current creation step"}
+                        visible, _ = evaluate("inspect", """() => {
+                            const dialog = document.querySelector('[role=dialog]');
+                            if (!dialog) {
+                                return [...document.querySelectorAll('button')].some(
+                                    button => button.innerText.trim() === 'New'
+                                ) ? ['New'] : [];
+                            }
+                            const controls = [];
+                            if (dialog.querySelector('#name')) controls.push('Name');
+                            if (dialog.querySelector('#description')) controls.push('Description');
+                            if (dialog.querySelector('[role=spinbutton]')) controls.push('Price');
+                            if ([...dialog.querySelectorAll('button')].some(
+                                button => button.innerText.trim() === 'Save'
+                            )) controls.push('Save');
+                            return controls;
+                        }""")
+                        return {"visible_controls": [
+                            {"label": label, "selector": target}
+                            for label, (_, _, target, _) in controls.items() if label in visible
+                        ]}
+                    pending = steps[position:4] if 1 <= position < 4 else steps[position:position + 1]
+                    matches = [
+                        item for item in pending if
+                        request.get("action") == item[1] and request.get("selector") == item[2]
+                    ]
+                    if not matches:
+                        return {"error": "Action is not allowed in the current form state"}
+                    selected, = matches
+                    at = steps.index(selected, position)
+                    steps[position], steps[at] = steps[at], steps[position]
+                    step, tool, selector, value = selected
                     position += 1
                     try:
                         if step == "save":

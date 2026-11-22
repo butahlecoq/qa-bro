@@ -14,8 +14,8 @@ from threading import Thread
 
 from qabro.sakai_cases import CREATE_CHECKS
 from qabro.sakai_comparison import compare_sakai, markdown_report, measure_sakai, measured_worker_run
-from qabro.sakai_training import explorer_input, train_sakai
-from qabro.sakai_smoke import PUBLIC_URL, smoke
+from qabro.sakai_training import train_sakai
+from qabro.sakai_smoke import PRICE, PUBLIC_URL, smoke
 
 
 def run_pi(executable, model, prompt, cwd, *, timeout, extension=None, env=None):
@@ -124,59 +124,40 @@ def bridge(dispatch):
             thread.join()
 
 
-def worker_driver(pi, model, cwd, skill, *, launch=run_pi, replay_actions=None, batch_fills=False):
+def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
 
     def drive(dispatch):
-        read_before_action = acted = False
+        read_before_price = price_started = False
         tool_calls = 0
 
         def route(request):
-            nonlocal read_before_action, acted, tool_calls
+            nonlocal read_before_price, price_started, tool_calls
             tool_calls += 1
             if request.get("action") == "read_skill":
-                if body is not None and not acted and replay_actions is None:
-                    read_before_action = True
+                if body is not None and not price_started:
+                    read_before_price = True
                 return {"skill": body}
-            if request.get("action") == "replay":
-                if replay_actions is None or acted:
-                    return {"error": "Replay is unavailable or creation has already started"}
-                acted = True
-                actions = [
-                    {"action": step["tool"], "selector": step["selector"]} for step in replay_actions
-                ]
-                if batch_fills:
-                    actions[1:4] = [{"action": "fill_batch", "selectors": [
-                        step["selector"] for step in replay_actions[1:4]
-                    ]}]
-                for action in actions:
-                    result = dispatch(action)
-                    if result.get("status") != "accepted":
-                        if result.get("status") == "creation_complete":
-                            read_before_action = True
-                        return result
-                return {"error": "Replay did not complete creation"}
-            if request.get("action") in {"click", "fill"}:
-                acted = True
+            if request.get("action") == "fill" and request.get("selector") == PRICE:
+                price_started = True
             return dispatch(request)
 
         prompt = (
             "Create the supplied synthetic product using the sakai tool. "
-            "Read the available skill if one is offered. Inspect the UI if you need a selector. "
+            "Read the available skill if one is offered. Inspect visible controls and decide which action to take next. "
             "For fill, send only action and selector: the host inserts the supplied value. "
             "The host runs all checks automatically, including dialog_open; do not stop to run them. "
             "An accepted response means continue to the next step. If unsure, inspect again. "
             "Stop only on creation_complete or if the tool says creation is stopped."
         )
         prompt += "\nSkill available: " + ("yes" if body is not None else "no")
-        prompt += "\nExecutable replay available: " + ("yes. Call replay once." if replay_actions else "no.")
         with bridge(route) as env:
             body_text, tokens, calls, session = launch(
                 pi, model, prompt, cwd, timeout=90, extension=extension,
                 env={**env, "QABRO_SAKAI_TURNS": "12"},
             )
-        return body_text, tokens, calls, session, read_before_action, tool_calls
+        return body_text, tokens, calls, session, read_before_price, tool_calls
 
     return drive
 
@@ -195,15 +176,9 @@ def main():
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
-    parser.add_argument("--replay-creation", action="store_true", help="Measure one-call creation replay from a validated trace")
-    parser.add_argument("--batch-fills", action="store_true", help="Use native browse batch fill during executable replay")
     args = parser.parse_args()
-    if args.batch_fills and not args.replay_creation:
-        parser.error("--batch-fills requires --replay-creation")
     if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
         parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
-    if args.replay_creation and not args.candidate_from:
-        parser.error("--replay-creation requires --candidate-from")
     if args.resume_training and not args.experiment:
         parser.error("--resume-training requires --experiment")
     if not 1 <= args.pairs <= 5:
@@ -214,7 +189,6 @@ def main():
     if not args.resume_training:
         output.mkdir(mode=0o700)
 
-    replay_actions = None
 
     def run_worker(seed, skill):
         label = "assisted" if skill else "baseline"
@@ -230,7 +204,6 @@ def main():
             directory, args.browse, args.url, case="SAKAI-02", seed=seed,
             series=f"series-{seed}", pi_worker=worker_driver(
                 executable, args.model, output, skill, launch=launch,
-                replay_actions=replay_actions if skill else None, batch_fills=args.batch_fills and skill is not None,
             ),
             model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
@@ -270,18 +243,13 @@ def main():
         model = f"codex/{args.model}" if args.codex else args.model
         if environment.get("model") != model or environment.get("target_url") != args.url:
             raise ValueError("Saved experiment used a different model or target")
+        if candidate.get("id") != "sakai-price-input":
+            raise ValueError("Expected a component skill; legacy creation skills cannot be used")
         if candidate.get("status") != "active":
             raise ValueError("Expected a previously validated candidate")
         if candidate["browser_capabilities_sha256"] != inspect(args.browse)["schema_sha256"]:
             raise ValueError("Browser schema changed since candidate validation")
         learning = prior["learning_tokens"]
-        if args.replay_creation:
-            source_id, = candidate["source_attempt_ids"]
-            source_path = next(
-                path for path in previous.glob("*/smoke.json")
-                if json.loads(path.read_text())["attempt"] == source_id
-            )
-            replay_actions = explorer_input(source_path.with_name("smoke.sqlite"), source_id)["actions"]
     else:
         candidate_dir = output / "candidate"
         candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
@@ -302,9 +270,7 @@ def main():
         pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
         extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
-    comparison["assisted_mode"] = (
-        "batched_replay" if args.batch_fills else "executable_replay" if args.replay_creation else "markdown_skill"
-    )
+    comparison["assisted_mode"] = "component_skill"
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")

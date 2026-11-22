@@ -29,16 +29,16 @@ class SakaiTrainingTests(unittest.TestCase):
         from hashlib import sha256
         from unittest.mock import patch
 
-        from qabro.sakai_training import SECTIONS, extract_candidate
+        from qabro.sakai_training import extract_candidate
 
         output = Path(self.enterContext(TemporaryDirectory())) / "candidate"
-        response = "\n\n".join(f"## {section}\nUse name, description and price_cents." for section in SECTIONS)
+        response = '{"selector":"#price"}'
         with patch("qabro.sakai_training.explorer_input", return_value={
-            "actions": [{"step": "new", "tool": "click"}],
+            "interaction": {"component": "Price", "tool": "fill", "selector": "#price"},
             "checks": [{"id": "saved", "artifact_id": "local-only"}],
         }):
             def ask(prompt):
-                self.assertIn('"tool": "click"', prompt)
+                self.assertIn('"tool": "fill"', prompt)
                 self.assertNotIn("local-only", prompt)
                 return response, 17
 
@@ -95,7 +95,7 @@ class SakaiTrainingTests(unittest.TestCase):
         from hashlib import sha256
         from unittest.mock import patch
 
-        from qabro.sakai_training import SECTIONS, train_sakai
+        from qabro.sakai_training import train_sakai
 
         root = Path(self.enterContext(TemporaryDirectory()))
         database = root / "worker.sqlite"
@@ -124,9 +124,9 @@ class SakaiTrainingTests(unittest.TestCase):
 
         def explorer(_):
             calls.append("explorer")
-            return "\n\n".join(f"## {section}\nUse name, description and price_cents." for section in SECTIONS), 12
+            return '{"selector":"#price"}', 12
 
-        with patch("qabro.sakai_training.explorer_input", return_value={"actions": [], "checks": []}):
+        with patch("qabro.sakai_training.explorer_input", return_value={"interaction": {"selector": "#price"}}):
             active = train_sakai(output, "a" * 64, (1, 2, 3), worker, explorer)
         self.assertEqual(calls, [1, "explorer", 2, 3])
         self.assertEqual(active["status"], "active")

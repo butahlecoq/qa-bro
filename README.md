@@ -187,7 +187,7 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 
 Add `--experiment` to train, extract in a separate text-only Pi session, validate on two fresh seeds, and run five held-out SAKAI-02 pairs. The command writes local worker journals, `comparison.json`, and `report.md` after a complete run. Use `--url http://127.0.0.1:5173/pages/crud` to use a local Sakai deployment.
 
-Both modes use the same constrained creation tool. Inspect returns the next allowed selector, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting a creation action and completes the procedure. This measures the benefit of a skill for this restricted workflow.
+Both modes use the same constrained creation tool. Inspect returns visible control labels and locators, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting a creation action and completes the procedure. This measures the benefit of a skill for this restricted workflow.
 
 ### Run the Sakai experiment with a ChatGPT subscription
 
@@ -204,8 +204,8 @@ One pair is a smoke experiment. Omit `--pairs 1` for five pairs. Codex reports a
 To measure a fresh pair with a previously validated skill, add `--candidate-from /path/to/previous-experiment --measurement-seed 5` and use a new output directory. The harness checks the browser schema, model, target URL, and candidate digest. It keeps reports for separate runs independent.
 
 
-Add `--replay-creation` to a separate held-out run to test executable reuse. The worker requests the verified creation sequence in one tool call. The host replays the traced selectors with current inputs and runs the same independent checks. This experiment groups worker requests. It still sends individual browse calls, preserves their trace, and blocks replay once creation has already started.
 
-Add `--batch-fills` to executable replay to send the three adjacent field fills in one native browse request. The installed `fill` schema must support `fields`. The host checks all three values before sending Save separately. The journal counts three browser actions for the one batched MCP call.
 
 With Pi, the final successful creation tool response ends the worker session without a follow-up model turn when Pi can terminate that tool batch. The host still checks the saved record before issuing a verdict.
+
+The Sakai learner stores a locator for one verified Price field interaction. The worker chooses the actions from the live controls. Previous scenario-replay reports are historical and cannot be used to measure component learning.
