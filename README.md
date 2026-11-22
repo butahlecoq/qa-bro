@@ -7,7 +7,7 @@ QA Bro is a local skill system for an existing Pi QA agent that drives a browser
 This repository evaluates the implementation on locally controlled fixtures and open-source applications with browse and an OpenCode session.
 
 - [Baseline smoke test](https://github.com/butahlecoq/qa-bro/issues/1) verified the local requirements fixture with an empty catalog.
-- [Held-out pilot](https://github.com/butahlecoq/qa-bro/issues/11) requires matched runs in all four modes, separate online-learning costs, and results on a second platform.
+- [Held-out pilot](https://github.com/butahlecoq/qa-bro/issues/11) measured all four modes on local applications. The release gate failed on incomplete edit checks and acquisition cost.
 - [Compiled backend evaluation](https://github.com/butahlecoq/qa-bro/issues/12) kept plain dispatch as the default after paired category-picker trials.
 
 - [Design specification](SPEC.md)
@@ -221,7 +221,18 @@ Validation asks the worker to consult the candidate. During measurement, the wor
 
 Use `--require-skill` on a fresh measurement seed to measure the cost of deliberately consulting the candidate. Keep these runs separate from optional-skill runs.
 
-In one held-out `gpt-6-luna` pair, both modes passed all six checks. Live inspection already exposed the Price locator. The baseline filled three fields in one dispatch. The assisted worker looked up the skill, batched two fields, and filled Price separately. That pair took 27.557 seconds and 119,018 tokens without the skill, and 35.446 seconds and 151,479 tokens with it. It established no savings for this candidate. The matched Pi evaluation is tracked in [issue #15](https://github.com/butahlecoq/qa-bro/issues/15).
+In the 30-pair local Sakai run with OpenCode and subscription-backed `openai/gpt-6-luna`, the baseline passed 30/30 and the skill-available arm passed 29/30. Live inspection already exposed the Price locator. The worker used the skill in 14 passing attempts.
+
+| Metric | Baseline | Skill available |
+| --- | ---: | ---: |
+| Median elapsed time across 29 matched passes | 31.176 s | 37.083 s |
+| Tokens across all 30 attempts per mode | 236,818 | 357,974 |
+| Completed model steps | 194 | 269 |
+| Browser MCP calls | 674 | 714 |
+
+Acquisition cost 37,389 tokens. The assisted arm consumed 158,545 more tokens including acquisition, with no measured break-even. [30-pair results](https://github.com/butahlecoq/qa-bro/issues/16#issuecomment-7078670471)
+
+In a separate six-case batch, three browser workers finished in 70.27 seconds versus 200.58 seconds with one worker. Both modes passed all checks. Median per-case latency was 32.37 versus 33.16 seconds. The 2.85× ratio measures aggregate throughput with concurrent workers. [Six-case throughput results](https://github.com/butahlecoq/qa-bro/issues/16#issuecomment-7078725857)
 
 
 
