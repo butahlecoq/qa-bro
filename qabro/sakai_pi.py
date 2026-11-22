@@ -186,30 +186,39 @@ def bridge(dispatch):
 def worker_driver(pi, model, cwd, skill, *, launch=run_pi, validate_skill=False):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
+    form = json.loads(body.split("\n\n", 1)[1]) if body and body.startswith("# Sakai Product Details controls\n") else None
 
     def drive(dispatch):
         read_before_price = price_started = False
+        form_delivered = False
         tool_calls = 0
 
         def route(request):
-            nonlocal read_before_price, price_started, tool_calls
+            nonlocal read_before_price, price_started, tool_calls, form_delivered
             tool_calls += 1
             if request.get("action") == "read_skill":
-                if body is not None and not price_started:
+                if body is not None and not form and not price_started:
                     read_before_price = True
                 return {"skill": body}
             targets = request.get("selectors")
             if (request.get("action") == "fill" and request.get("selector") == PRICE) or (
                 request.get("action") == "fill_many" and isinstance(targets, list) and PRICE in targets
             ):
+                read_before_price = read_before_price or form_delivered
                 if validate_skill and not read_before_price:
                     return {"error": "Read the candidate before filling Price in this validation attempt"}
                 price_started = True
-            return dispatch(request)
+            outcome = dispatch(request)
+            if form and outcome.get("component_scope") == form["scope"]:
+                form_delivered = True
+                return {**outcome, "visible_controls": [
+                    {"label": label, "selector": selector} for label, selector in form["controls"].items()
+                ]}
+            return outcome
 
         prompt = (
             "Create the supplied synthetic product using the sakai tool. "
-            "Inspect visible controls and decide which action to take next. "
+            "Use the latest controls returned by the tool, or inspect if none are available. Decide the next action. "
             "If a skill is offered, read it only when it could resolve an interaction you are unsure about. "
             "For fill, send one selector. For independent visible fields you choose to fill together, "
             "send fill_many with a selectors array. The host inserts their supplied values. "
@@ -217,8 +226,8 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi, validate_skill=False)
             "An accepted response means continue to the next step. If unsure, inspect again. "
             "Stop only on creation_complete or if the tool says creation is stopped."
         )
-        prompt += "\nAvailable component skill: " + ("Sakai Price input" if body is not None else "none")
-        if validate_skill:
+        prompt += "\nAvailable component skill: " + ("Sakai Price input" if body is not None and not form else "none")
+        if validate_skill and not form:
             prompt += "\nThis is a validation attempt. Read the Price skill before filling Price."
         with bridge(route) as env:
             body_text, tokens, calls, session = launch(
@@ -246,6 +255,7 @@ def main():
     phase = parser.add_mutually_exclusive_group()
     phase.add_argument("--experiment", action="store_true", help="Measure held-out pairs, training first if needed")
     phase.add_argument("--train-only", action="store_true", help="Finish exploration and validation without measuring")
+    parser.add_argument("--learn-form", action="store_true", help="Learn an unordered component control map")
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
@@ -336,7 +346,7 @@ def main():
             raise ValueError("Saved acquisition refers to a different candidate revision")
         if environment.get("model") != model or environment.get("target_url") != args.url:
             raise ValueError("Saved experiment used a different model or target")
-        if candidate.get("id") != "sakai-price-input":
+        if candidate.get("id") not in {"sakai-price-input", "sakai-form-controls"}:
             raise ValueError("Expected a component skill; legacy creation skills cannot be used")
         if candidate.get("status") != "active":
             raise ValueError("Expected a previously validated candidate")
@@ -349,7 +359,10 @@ def main():
         def cost(attempt):
             return measured_worker_run(sources[attempt], attempt).tokens
         try:
-            candidate = train_sakai(candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer)
+            candidate = train_sakai(
+                candidate_dir, inspect(args.browse)["schema_sha256"], seeds, record_worker, explorer,
+                learn_form=args.learn_form,
+            )
         except ExplorerDeclined as decision:
             candidate = None
             training, = sources

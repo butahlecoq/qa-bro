@@ -219,6 +219,8 @@ To measure a fresh pair with a previously validated skill, add `--candidate-from
 
 For a two-phase, single-worker comparison, first run with `--train-only --seed 1`. Wait for `acquisition.json`, which records the validated skill revision and acquisition costs. Then use a new output directory with `--experiment --candidate-from /path/to/acquisition-output --measurement-seed 4 --jobs 1`. The report shows median per-case latency, the median of paired time differences, and verdicts. Each measured pair uses one case input, fresh worker sessions, and the same frozen skill revision in the assisted arm.
 
+Add `--learn-form` during acquisition to learn an unordered map of controls from a recorded form observation. The harness can return those locators with the dialog-open response after verifying the dialog title. The worker still chooses actions, and the harness still verifies the entered values before Save. The candidate carries UI locators only.
+
 Validation asks the worker to consult the candidate. During measurement, the worker can skip the skill when live inspection gives it enough information. The report counts those passes separately from verified skill reuse. In both modes, the worker selects visible fields and the harness validates and executes any batch.
 
 Use `--require-skill` on a fresh measurement seed to measure the cost of deliberately consulting the candidate. Keep these runs separate from optional-skill runs.

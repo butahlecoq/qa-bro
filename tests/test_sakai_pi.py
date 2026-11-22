@@ -62,6 +62,36 @@ class SakaiPiTests(unittest.TestCase):
         result = worker_driver("pi", "fixture", directory, skill, launch=launch)(lambda _: {})
         self.assertEqual(result[-2:], (True, 3))
 
+    def test_worker_delivers_form_controls_only_after_verified_scope(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from qabro.sakai_pi import PRICE, worker_driver
+
+        directory = Path(self.enterContext(TemporaryDirectory()))
+        skill = directory / "SKILL.md"
+        skill.write_text("# Sakai Product Details controls\n\n" + json.dumps({
+            "scope": "Product Details", "controls": {"Price": PRICE},
+        }))
+
+        def launch(*_, env, **kwargs):
+            def request(payload):
+                call = Request(env["QABRO_SAKAI_BRIDGE"], data=json.dumps(payload).encode(),
+                               headers={"Authorization": "Bearer " + env["QABRO_SAKAI_TOKEN"]})
+                with urlopen(call, timeout=2) as response:
+                    return json.load(response)
+
+            self.assertNotIn("visible_controls", request({"action": "inspect"}))
+            self.assertEqual(request({"action": "click"})["visible_controls"], [{"label": "Price", "selector": PRICE}])
+            self.assertEqual(request({"action": "fill", "selector": PRICE})["status"], "accepted")
+            return "done", 100, 3, "session"
+
+        def dispatch(request):
+            return {"status": "accepted", **({"component_scope": "Product Details"} if request["action"] == "click" else {})}
+
+        result = worker_driver("pi", "fixture", directory, skill, launch=launch, validate_skill=True)(dispatch)
+        self.assertEqual(result[-2:], (True, 3))
+
     def test_opencode_refuses_stored_api_key_before_model_invocation(self):
         from pathlib import Path
         from subprocess import CompletedProcess

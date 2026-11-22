@@ -214,7 +214,7 @@ def smoke(
                     if position == len(steps):
                         return {"status": "creation_complete"}
                     if request.get("action") == "inspect":
-                        visible, _ = evaluate("inspect", """() => {
+                        visible, proof = evaluate("inspect", """() => {
                             const dialog = document.querySelector('[role=dialog]');
                             if (!dialog) {
                                 return [...document.querySelectorAll('button')].some(
@@ -230,10 +230,15 @@ def smoke(
                             )) controls.push('Save');
                             return controls;
                         }""")
-                        return {"visible_controls": [
+                        observed = {"visible_controls": [
                             {"label": label, "selector": target}
                             for label, (_, _, target, _) in controls.items() if label in visible
                         ]}
+                        if position == 1:
+                            journal.append(attempt, f"form-observation:{sequence}", "component_observation", {
+                                **observed, "artifact_id": proof,
+                            })
+                        return observed
                     pending = steps[position:4] if 1 <= position < 4 else steps[position:position + 1]
                     if request.get("action") == "fill_many":
                         selectors = request.get("selectors")
@@ -294,6 +299,8 @@ def smoke(
                     except Exception as error:
                         failure = error
                         raise
+                    if step == "new":
+                        return {"status": "accepted", "component_scope": "Product Details"}
                     return {"status": "creation_complete" if position == len(steps) else "accepted"}
 
                 worker_result = pi_worker(dispatch)
