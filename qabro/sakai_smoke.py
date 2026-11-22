@@ -62,7 +62,10 @@ def smoke(
                         "session_id": session, "seed": seed, "model": model, "target_url": url,
                         "browser_schema_sha256": environment["browse"]["schema_sha256"],
                         "scenario_sha256": sha256(scenario.read_bytes()).hexdigest(),
-                        "budgets": {"model_calls": 12, "worker_requests": 24, "worker_seconds": 90},
+                        "budgets": {
+                            "model_calls": None if (model or "").startswith(("codex/", "opencode/")) else 12,
+                            "worker_requests": 24, "worker_seconds": 90,
+                        },
                         "skill_applied": bool(skill_sha256 and read_skill and position == len(steps) and failure is None),
                         "skill_sha256": skill_sha256,
                     })
