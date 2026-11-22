@@ -245,11 +245,14 @@ def main():
     parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
+    parser.add_argument("--require-skill", action="store_true", help="Require skill use in assisted measurement")
     args = parser.parse_args()
     if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
         parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
     if args.resume_training and not args.experiment:
         parser.error("--resume-training requires --experiment")
+    if args.require_skill and not args.experiment:
+        parser.error("--require-skill requires --experiment")
     if not 1 <= args.pairs <= 5:
         parser.error("--pairs expects between one and five pairs")
     launch = run_opencode if args.opencode else run_codex if args.codex else run_pi
@@ -332,13 +335,15 @@ def main():
     first_seed = args.measurement_seed if args.measurement_seed is not None else args.seed + 3
     pairs = measure_sakai(
         candidate_dir, tuple(range(first_seed, first_seed + args.pairs)), frozenset(seeds) | earlier_seeds,
-        lambda seed, skill: measured_worker_run(*run_worker(seed, skill)),
+        lambda seed, skill: measured_worker_run(*run_worker(
+            seed, skill, validate_skill=args.require_skill and skill is not None,
+        )),
     )
     comparison = compare_sakai(
         pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
         extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
-    comparison["assisted_mode"] = "component_skill"
+    comparison["assisted_mode"] = "required_component_skill" if args.require_skill else "component_skill"
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")

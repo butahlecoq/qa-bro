@@ -215,6 +215,8 @@ To measure a fresh pair with a previously validated skill, add `--candidate-from
 
 Validation asks the worker to consult the candidate. During measurement, the worker can skip the skill when live inspection gives it enough information. The report counts those passes separately from verified skill reuse. In both modes, the worker selects visible fields and the harness validates and executes any batch.
 
+Use `--require-skill` on a fresh measurement seed to measure the cost of deliberately consulting the candidate. Keep these runs separate from optional-skill runs.
+
 In one held-out `gpt-6-luna` pair, both modes passed all six checks. Live inspection already exposed the Price locator. The baseline filled three fields in one dispatch. The assisted worker looked up the skill, batched two fields, and filled Price separately. That pair took 27.557 seconds and 119,018 tokens without the skill, and 35.446 seconds and 151,479 tokens with it. It established no savings for this candidate. The matched Pi evaluation is tracked in [issue #15](https://github.com/butahlecoq/qa-bro/issues/15).
 
 
