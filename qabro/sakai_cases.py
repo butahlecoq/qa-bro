@@ -25,3 +25,8 @@ def product_for(seed: int, series: str, pair: int) -> Product:
         price,
         updated,
     )
+
+
+CREATE_CHECKS = (
+    "dialog_open", "entered_fields", "saved", "exact_row_and_price", "saved_fields", "record_remains",
+)
