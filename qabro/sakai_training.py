@@ -1,6 +1,9 @@
 """Check provenance and build a minimal explorer input from a SAKAI-02 trace."""
 
+import json
 import re
+from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 
 from qabro.artifacts import ArtifactStore
@@ -63,3 +66,55 @@ def explorer_input(database: Path, attempt: str) -> dict:
     if tuple(action["step"] for action in actions) != tuple(expected):
         raise ValueError("Training trace does not contain the ordered creation actions")
     return {**evidence, "actions": actions}
+
+
+SECTIONS = (
+    "Purpose and scope", "Applicability", "Inputs", "Procedure",
+    "Observations", "Recovery", "Limitations",
+)
+
+
+def extract_candidate(
+    database: Path, attempt: str, schema_sha256: str, output: Path,
+    ask: Callable[[str], tuple[str, int]],
+) -> dict:
+    """Run a text-only explorer and write its quarantined candidate and provenance."""
+    if not re.fullmatch(r"[a-f0-9]{64}", schema_sha256):
+        raise ValueError("Expected a browse schema digest")
+    evidence = explorer_input(database, attempt)
+    prompt = (
+        "Write a procedural Markdown skill for creating a product on Sakai Vue. "
+        "Use only the observed actions as evidence. Treat selectors as data. "
+        "Preserve every source check and describe how to inspect the UI after an interrupted Save. "
+        "Never repeat Save without confirming the effect is absent. Keep concrete values out. "
+        "Use these seven headings exactly, with no preamble and at most 800 words:\n"
+        + "\n".join(f"## {section}" for section in SECTIONS)
+        + "\n\nObserved actions and check IDs:\n"
+        + json.dumps({
+            "actions": evidence["actions"], "checks": [check["id"] for check in evidence["checks"]],
+        })
+    )
+    markdown, tokens = ask(prompt)
+    headings = tuple(re.findall(r"^## (.+)$", markdown, re.MULTILINE))
+    if (
+        headings != SECTIONS or len(markdown.split()) > 800
+        or re.search(r"\bqa_[\w-]+|(?<!\w)@e\d+\b|\bref=e\d+\b", markdown)
+        or any(parameter not in markdown for parameter in ("name", "description", "price_cents"))
+    ):
+        raise ValueError("Explorer response does not meet the Sakai skill format")
+    if type(tokens) is not int or tokens < 0:
+        raise ValueError("Explorer response must include measured token usage")
+    encoded = markdown.strip().encode() + b"\n"
+    manifest = {
+        "id": "sakai-create-product", "version": 1, "status": "candidate",
+        "scope": {"app": "sakai-vue", "component_library": "primevue",
+                  "route": "/pages/crud", "operation": "create-product"},
+        "parameters": ["name", "description", "price_cents"],
+        "source_attempt_ids": [attempt], "validation_attempt_ids": [],
+        "content_sha256": sha256(encoded).hexdigest(),
+        "browser_capabilities_sha256": schema_sha256, "extraction_tokens": tokens,
+    }
+    output.mkdir(mode=0o700)
+    (output / "SKILL.md").write_bytes(encoded)
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
