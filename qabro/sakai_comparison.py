@@ -22,7 +22,7 @@ class SakaiRun:
     verdict: str
     checks: tuple[str, ...]
     tokens: int
-    model_calls: int
+    model_calls: int | None
     elapsed_ns: int
     skill_revision: str | None = None
     skill_applied: bool = False
@@ -31,12 +31,12 @@ class SakaiRun:
 
     def __post_init__(self):
         if any(type(value) is not int or value < 0 for value in (
-            self.tokens, self.model_calls, self.elapsed_ns,
+            self.tokens, self.elapsed_ns,
         )):
             raise ValueError("Sakai runs require measured nonnegative counters")
         if any(value is not None and (type(value) is not int or value < 0)
-               for value in (self.mcp_calls, self.browser_actions)):
-            raise ValueError("Browser activity counters must be nonnegative integers")
+               for value in (self.model_calls, self.mcp_calls, self.browser_actions)):
+            raise ValueError("Call and action counters must be nonnegative integers")
         if self.skill_applied and not self.skill_revision:
             raise ValueError("An applied skill must identify its frozen revision")
 
@@ -108,7 +108,8 @@ def compare_sakai(
             "skill_applied": assisted.skill_applied,
             "baseline": asdict(baseline), "assisted": asdict(assisted),
             "tokens_saved": baseline.tokens - assisted.tokens,
-            "model_calls_saved": baseline.model_calls - assisted.model_calls,
+            "model_calls_saved": (baseline.model_calls - assisted.model_calls
+                                  if baseline.model_calls is not None and assisted.model_calls is not None else None),
             "elapsed_ns_saved": baseline.elapsed_ns - assisted.elapsed_ns,
         })
     reuses = [row for row in rows if row["both_pass"] and row["skill_applied"]]

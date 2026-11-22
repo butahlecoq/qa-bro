@@ -124,7 +124,9 @@ def smoke(
 
             environment = {
                 "browse": snapshot_schema(live), "target_url": url, "tab": attempt,
-                "connection": "browse stdio MCP", "model": model, "harness": "qa-bro Pi" if pi_worker else None,
+                "connection": "browse stdio MCP", "model": model,
+                "harness": ("qa-bro Codex" if model and model.startswith("codex/") else "qa-bro Pi")
+                if pi_worker else None,
             }
             open_page("ready")
             traits, _ = evaluate("environment", "() => ({user_agent:navigator.userAgent, width:innerWidth, height:innerHeight})")

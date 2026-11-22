@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from contextlib import contextmanager
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -39,6 +40,46 @@ def run_pi(executable, model, prompt, cwd, *, timeout, extension=None, env=None)
     session = next(event["id"] for event in events if event["type"] == "session")
     body = "\n".join(block["text"] for block in messages[-1]["content"] if block["type"] == "text")
     return body, sum(message["usage"]["totalTokens"] for message in messages), len(messages), session
+
+
+def run_codex(executable, model, prompt, cwd, *, timeout, extension=None, env=None):
+    environment = {**os.environ, **(env or {})}
+    for override in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
+        environment.pop(override, None)
+    login = subprocess.run(
+        [executable, "login", "status"], cwd=cwd, env=environment,
+        capture_output=True, text=True, timeout=10,
+    )
+    if login.returncode or "Logged in using ChatGPT" not in login.stdout + login.stderr:
+        raise RuntimeError("Codex must be signed in using ChatGPT for this experiment")
+    command = [
+        executable, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+        "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "plugins",
+        "-c", 'web_search="disabled"', "-c", 'model_provider="openai"', "-m", model,
+    ]
+    if extension:
+        shim = Path(__file__).with_name("sakai_codex_mcp.py")
+        command.extend([
+            "-c", "mcp_servers.sakai.command=" + json.dumps(sys.executable),
+            "-c", "mcp_servers.sakai.args=" + json.dumps([str(shim)]),
+            "-c", 'mcp_servers.sakai.env_vars=["QABRO_SAKAI_BRIDGE","QABRO_SAKAI_TOKEN"]',
+            "-c", 'mcp_servers.sakai.tools.sakai.approval_mode="approve"',
+        ])
+    result = subprocess.run(
+        [*command, prompt], cwd=cwd, env=environment, timeout=timeout,
+        capture_output=True, text=True,
+    )
+    events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    if result.returncode or not any(event["type"] == "turn.completed" for event in events):
+        raise RuntimeError("Codex did not complete the session")
+    usage = next(event["usage"] for event in events if event["type"] == "turn.completed")
+    session = next(event["thread_id"] for event in events if event["type"] == "thread.started")
+    messages = [event["item"]["text"] for event in events
+                if event["type"] == "item.completed" and event["item"]["type"] == "agent_message"]
+    body = messages[-1].strip() if messages else ""
+    if body.startswith("```markdown\n") and body.endswith("\n```"):
+        body = body.removeprefix("```markdown\n").removesuffix("\n```")
+    return body, usage["input_tokens"] + usage["output_tokens"], None, session
 
 
 @contextmanager
@@ -83,7 +124,7 @@ def bridge(dispatch):
             thread.join()
 
 
-def worker_driver(pi, model, cwd, skill):
+def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
     extension = Path(__file__).with_name("pi") / "sakai.js"
     body = skill.read_text() if skill else None
 
@@ -108,7 +149,7 @@ def worker_driver(pi, model, cwd, skill):
         )
         prompt += "\nSkill available: " + ("yes" if body is not None else "no")
         with bridge(route) as env:
-            body_text, tokens, calls, session = run_pi(
+            body_text, tokens, calls, session = launch(
                 pi, model, prompt, cwd, timeout=90, extension=extension,
                 env={**env, "QABRO_SAKAI_TURNS": "12"},
             )
@@ -121,21 +162,39 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--pi", default="pi")
+    parser.add_argument("--codex", help="Use the signed-in Codex CLI instead of Pi")
+    parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--browse", default="browse")
     parser.add_argument("--model", required=True)
     parser.add_argument("--url", default=PUBLIC_URL)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--experiment", action="store_true", help="Train, validate, and measure five A/B pairs")
+    parser.add_argument("--resume-training", action="store_true", help="Reuse a completed baseline before extraction")
     args = parser.parse_args()
+    if args.resume_training and not args.experiment:
+        parser.error("--resume-training requires --experiment")
+    if not 1 <= args.pairs <= 5:
+        parser.error("--pairs expects between one and five pairs")
+    launch = run_codex if args.codex else run_pi
+    executable = args.codex or args.pi
     output = args.output.resolve()
-    output.mkdir(mode=0o700)
+    if not args.resume_training:
+        output.mkdir(mode=0o700)
+
     def run_worker(seed, skill):
         label = "assisted" if skill else "baseline"
         directory = output / f"{seed}-{label}"
+        if args.resume_training and seed == args.seed and skill is None:
+            saved = json.loads((directory / "smoke.json").read_text())
+            environment = json.loads((directory / "environment.json").read_text())
+            model = f"codex/{args.model}" if args.codex else args.model
+            if environment.get("model") != model or environment.get("target_url") != args.url:
+                raise ValueError("Saved training run used a different model or target")
+            return directory / "smoke.sqlite", saved["attempt"]
         result = smoke(
             directory, args.browse, args.url, case="SAKAI-02", seed=seed,
-            series=f"series-{seed}", pi_worker=worker_driver(args.pi, args.model, output, skill),
-            model=args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
+            series=f"series-{seed}", pi_worker=worker_driver(executable, args.model, output, skill, launch=launch),
+            model=f"codex/{args.model}" if args.codex else args.model, skill_sha256=sha256(skill.read_bytes()).hexdigest() if skill else None,
         )
         return directory / "smoke.sqlite", result["attempt"]
 
@@ -155,7 +214,7 @@ def main():
         return result
 
     def explorer(prompt):
-        text, tokens, _, _ = run_pi(args.pi, args.model, prompt, output, timeout=90)
+        text, tokens, _, _ = launch(executable, args.model, prompt, output, timeout=90)
         return text, tokens
 
     seeds = tuple(range(args.seed, args.seed + 3))
@@ -164,7 +223,7 @@ def main():
     training, = candidate["source_attempt_ids"]
     cost = lambda attempt: measured_worker_run(sources[attempt], attempt).tokens
     pairs = measure_sakai(
-        candidate_dir, tuple(range(args.seed + 3, args.seed + 8)), frozenset(seeds),
+        candidate_dir, tuple(range(args.seed + 3, args.seed + 3 + args.pairs)), frozenset(seeds),
         lambda seed, skill: measured_worker_run(*run_worker(seed, skill)),
     )
     comparison = compare_sakai(

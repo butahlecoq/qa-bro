@@ -188,3 +188,15 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 Add `--experiment` to train, extract in a separate text-only Pi session, validate on two fresh seeds, and run five held-out SAKAI-02 pairs. The command writes local worker journals, `comparison.json`, and `report.md` after a complete run. Use `--url http://127.0.0.1:5173/pages/crud` to use a local Sakai deployment.
 
 Both modes use the same constrained creation tool. Inspect returns the next allowed selector, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting a creation action and completes the procedure. This measures the benefit of a skill for this restricted workflow.
+
+### Run the Sakai experiment with a ChatGPT subscription
+
+The Codex adapter requires an existing ChatGPT sign-in. It ignores user provider configuration and removes any OpenAI API key from the child process environment. Only the dedicated local Sakai MCP tool is enabled for the worker. Use a new private directory for each run.
+
+```sh
+python -m qabro.sakai_pi /path/to/new-private-output \
+  --codex "$(command -v codex)" --model gpt-6-luna \
+  --browse "$(command -v browse)" --experiment --pairs 1
+```
+
+One pair is a smoke experiment. Omit `--pairs 1` for five pairs. Codex reports aggregate input and output tokens for the session, including cached input in the input count. The experiment leaves the LLM call count blank because Codex CLI does not report the number of provider calls. Keep Codex and Pi results separate.

@@ -22,3 +22,20 @@ class SakaiPiTests(unittest.TestCase):
             with urlopen(request, timeout=2) as response:
                 self.assertEqual(json.load(response), {"status": "accepted"})
         self.assertEqual(calls, [{"action": "inspect"}])
+
+    def test_codex_refuses_api_key_login_before_model_invocation(self):
+        from pathlib import Path
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from qabro.sakai_pi import run_codex
+
+        with patch("qabro.sakai_pi.subprocess.run", return_value=CompletedProcess(
+            ["codex", "login", "status"], 0, "Logged in using an API key", "",
+        )) as invoked:
+            with self.assertRaisesRegex(RuntimeError, "signed in using ChatGPT"):
+                run_codex("codex", "model", "prompt", Path("."), timeout=5,
+                          env={"OPENAI_API_KEY": "test", "OPENAI_BASE_URL": "http://example.invalid"})
+        self.assertEqual(invoked.call_count, 1)
+        self.assertNotIn("OPENAI_API_KEY", invoked.call_args.kwargs["env"])
+        self.assertNotIn("OPENAI_BASE_URL", invoked.call_args.kwargs["env"])
