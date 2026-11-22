@@ -196,7 +196,10 @@ def main():
     parser.add_argument("--candidate-from", type=Path, help="Reuse a previously validated experiment directory")
     parser.add_argument("--measurement-seed", type=int)
     parser.add_argument("--replay-creation", action="store_true", help="Measure one-call creation replay from a validated trace")
+    parser.add_argument("--batch-fills", action="store_true", help="Use native browse batch fill during executable replay")
     args = parser.parse_args()
+    if args.batch_fills and not args.replay_creation:
+        parser.error("--batch-fills requires --replay-creation")
     if args.candidate_from and (not args.experiment or args.resume_training or args.measurement_seed is None):
         parser.error("--candidate-from requires --experiment and a fresh --measurement-seed")
     if args.replay_creation and not args.candidate_from:

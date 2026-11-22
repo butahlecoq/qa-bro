@@ -91,3 +91,13 @@ class SakaiPiTests(unittest.TestCase):
         )(dispatch)
         self.assertEqual(result[-2:], (True, 2))
         self.assertEqual(calls, [{"action": "click", "selector": "#new"}, {"action": "click", "selector": "#save"}])
+
+    def test_batch_fills_requires_executable_replay_at_cli_entry(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run([
+            sys.executable, "-m", "qabro.sakai_pi", "unused", "--model", "fixture", "--batch-fills",
+        ], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--batch-fills requires --replay-creation", result.stderr)
