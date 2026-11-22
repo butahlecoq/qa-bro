@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic, monotonic_ns, sleep
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -23,7 +23,11 @@ SEARCH = 'input[placeholder="Search..."]'
 ROW = 'tbody tr'
 
 
-def smoke(output: Path, executable: str, url: str, *, case: str = "smoke") -> dict:
+def smoke(
+    output: Path, executable: str, url: str, *, case: str = "smoke",
+    seed: int = 1, series: str | None = None, pi_worker=None, model: str | None = None,
+    skill_sha256: str | None = None,
+) -> dict:
     parsed = urlsplit(url)
     if parsed.path != "/pages/crud" or not (
         url == PUBLIC_URL or parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
@@ -33,7 +37,9 @@ def smoke(output: Path, executable: str, url: str, *, case: str = "smoke") -> di
     database = output / "smoke.sqlite"
     journal, store = Journal(database), ArtifactStore(database)
     attempt = f"sakai-{uuid4().hex[:12]}"
-    data = product_for(1, attempt, 0)
+    data = product_for(seed, series or attempt, 0)
+    started = monotonic_ns()
+    worker_result = None
     product, description = data.name, data.description
     price = f"{data.price_cents // 100}.{data.price_cents % 100:02d}"
     journal.start(attempt, attempt, "smoke")
@@ -90,7 +96,7 @@ def smoke(output: Path, executable: str, url: str, *, case: str = "smoke") -> di
 
             environment = {
                 "browse": snapshot_schema(live), "target_url": url, "tab": attempt,
-                "connection": "browse stdio MCP", "model": None, "harness": None,
+                "connection": "browse stdio MCP", "model": model, "harness": "qa-bro Pi" if pi_worker else None,
             }
             open_page("ready")
             traits, _ = evaluate("environment", "() => ({user_agent:navigator.userAgent, width:innerWidth, height:innerHeight})")
@@ -126,21 +132,71 @@ def smoke(output: Path, executable: str, url: str, *, case: str = "smoke") -> di
             check("reset_absent", count, 0)
             fill("reset_clear", SEARCH, "")
             check("reset_ready", ready, True)
-            click("new", 'role=button[name="New"]')
-            check("dialog_open", """() => document.querySelector('[role=dialog] [data-pc-section=title]')?.textContent""", "Product Details")
-            if case in {"smoke", "SAKAI-01"}:
-                click("empty_save", f'{DIALOG} button:has-text("Save")')
-                check("required_name", """() => document.querySelector('[role=dialog]')?.innerText.includes('Name is required.') ?? false""", True)
-            if case == "SAKAI-01":
-                button("cancel_empty", "Cancel")
-                check("table_ready", ready, True)
+            dialog_title = """() => document.querySelector('[role=dialog] [data-pc-section=title]')?.textContent"""
+            if pi_worker:
+                if case != "SAKAI-02":
+                    raise ValueError("The Pi harness currently supports SAKAI-02")
+                steps = [
+                    ("new", "click", 'role=button[name="New"]', None),
+                    ("name", "fill", f"{DIALOG} #name", product),
+                    ("description", "fill", f"{DIALOG} #description", description),
+                    ("price", "fill", PRICE, price),
+                    ("save", "click", f'{DIALOG} button:has-text("Save")', None),
+                ]
+                position = requests = 0
+                failure = None
+
+                def dispatch(request):
+                    nonlocal position, requests, failure
+                    requests += 1
+                    if requests > 24 or failure is not None:
+                        return {"error": "Creation is stopped"}
+                    if position == len(steps):
+                        return {"status": "creation_complete"}
+                    step, tool, selector, value = steps[position]
+                    if request.get("action") == "inspect":
+                        return {"step": step, "tool": tool, "selector": selector}
+                    if request.get("action") != tool or request.get("selector") != selector:
+                        return {"error": "Action does not match the current creation step"}
+                    position += 1
+                    try:
+                        if step == "save":
+                            check("entered_fields", fields, [product, description, data.price_cents])
+                        if tool == "click":
+                            click(step, selector)
+                        else:
+                            fill(step, selector, value)
+                        if step == "new":
+                            check("dialog_open", dialog_title, "Product Details")
+                        if step == "save":
+                            check("saved", closed, True)
+                    except Exception as error:
+                        failure = error
+                        raise
+                    return {"status": "creation_complete" if position == len(steps) else "accepted"}
+
+                worker_result = pi_worker(dispatch)
+                if failure is not None:
+                    raise failure
+                if position != len(steps):
+                    raise RuntimeError("Pi ended before completing creation")
             else:
-                fill("name", f"{DIALOG} #name", product)
-                fill("description", f"{DIALOG} #description", description)
-                fill("price", PRICE, price)
-                check("entered_fields", fields, [product, description, data.price_cents])
-                button("save", "Save")
-                check("saved", closed, True)
+                click("new", 'role=button[name="New"]')
+                check("dialog_open", """() => document.querySelector('[role=dialog] [data-pc-section=title]')?.textContent""", "Product Details")
+                if case in {"smoke", "SAKAI-01"}:
+                    click("empty_save", f'{DIALOG} button:has-text("Save")')
+                    check("required_name", """() => document.querySelector('[role=dialog]')?.innerText.includes('Name is required.') ?? false""", True)
+                if case == "SAKAI-01":
+                    button("cancel_empty", "Cancel")
+                    check("table_ready", ready, True)
+                else:
+                    fill("name", f"{DIALOG} #name", product)
+                    fill("description", f"{DIALOG} #description", description)
+                    fill("price", PRICE, price)
+                    check("entered_fields", fields, [product, description, data.price_cents])
+                    button("save", "Save")
+                    check("saved", closed, True)
+            if case != "SAKAI-01":
                 fill("search", SEARCH, product)
                 check("exact_row_and_price", prices(data.price_cents), [True])
                 row_action("edit", "pencil")
@@ -181,6 +237,23 @@ def smoke(output: Path, executable: str, url: str, *, case: str = "smoke") -> di
                     check("record_absent", count, 0)
                     fill("clear_search", SEARCH, "")
                     check("table_ready", ready, True)
+            if worker_result is not None:
+                _, tokens, model_calls, session, read_skill = worker_result
+                from hashlib import sha256
+
+                scenario = Path(__file__).resolve().parents[1] / "scenarios/sakai/SAKAI-02.md"
+                journal.append(attempt, "sakai:worker", "worker_metadata", {
+                    "session_id": session, "seed": seed, "model": model, "target_url": url,
+                    "browser_schema_sha256": environment["browse"]["schema_sha256"],
+                    "scenario_sha256": sha256(scenario.read_bytes()).hexdigest(),
+                    "budgets": {"model_calls": 12, "worker_requests": 24, "worker_seconds": 90},
+                    "skill_applied": bool(skill_sha256 and read_skill), "skill_sha256": skill_sha256,
+                })
+                calls = [payload for _, _, kind, payload in journal.events(attempt) if kind == "tool_start"]
+                journal.append(attempt, "sakai:usage", "worker_usage", {
+                    "tokens": tokens, "model_calls": model_calls, "elapsed_ns": monotonic_ns() - started,
+                    "mcp_calls": len(calls), "browser_actions": sum(not call["read_only"] for call in calls),
+                })
             result = {"verdict": "PASS", "case": case, "attempt": attempt, "target_url": url}
             journal.append(attempt, "scenario:finish", "scenario_finish", result)
             (output / "smoke.json").write_text(json.dumps(result, indent=2))

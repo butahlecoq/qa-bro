@@ -166,7 +166,7 @@ Run against the public demo with a dedicated browse tab, or pass `--url http://1
 python -m qabro.sakai_smoke /path/to/new-private-output --browse "$(command -v browse)"
 ```
 
-Pass `--case SAKAI-01`, `SAKAI-02`, `SAKAI-03`, or `SAKAI-04` to run one scenario in a fresh tab. Use a new output directory for each attempt. The command records the installed browse schema, browser environment, and redacted MCP trace locally. It checks empty-name validation, product creation, exact-row lookup, saved fields, and reset. The four natural-language experiment inputs are in [scenarios/sakai](scenarios/sakai). The smoke test runs directly through browse MCP. The worker and explorer experiment requires the custom Pi harness, whose source and configuration are absent from this checkout.
+Pass `--case SAKAI-01`, `SAKAI-02`, `SAKAI-03`, or `SAKAI-04` to run one scenario in a fresh tab. Use a new output directory for each attempt. The command records the installed browse schema, browser environment, and redacted MCP trace locally. It checks empty-name validation, product creation, exact-row lookup, saved fields, and reset. The four natural-language experiment inputs are in [scenarios/sakai](scenarios/sakai). The smoke test runs directly through browse MCP. The standalone Pi harness described below supports the Sakai worker and explorer experiment. The corporate Pi harness is separate.
 
 Build local A/B reports from measured Sakai worker runs with `python -m qabro.sakai_comparison runs.json /path/to/new-private-report`. The manifest supplies `required_checks`, ordered `pairs` with `baseline` and `assisted` records, and `learning` with `training_tokens`, `extraction_tokens` and `validation_tokens`. Each worker record supplies `seed`, `setup`, `verdict`, matched `checks`, `tokens`, `model_calls` and `elapsed_ns`. Assisted records also supply `skill_revision` and `skill_applied`. Include the skill instructions in the assisted token count. The command writes `comparison.json` and `report.md`.
 
@@ -175,3 +175,16 @@ Call `train_sakai` with three distinct seeds, a worker callback, and a text-only
 Use `measure_sakai` to run SAKAI-02 pairs through the same Pi worker adapter. It accepts an active candidate directory, held-out measurement seeds, and the training and validation seeds. The callback starts a fresh worker for each attempt and returns its measured `SakaiRun`. The runner alternates A/B order and verifies the candidate's digest before and after every attempt.
 
 To build a `SakaiRun` from the worker's database, call `measured_worker_run(database, attempt)`. Its `sakai:worker` event also supplies `model`, `target_url` and `budgets`, which are hashed with the scenario and browser schema to match paired setups. Record measured `tokens`, `model_calls`, `elapsed_ns`, `mcp_calls` and `browser_actions` in `sakai:usage`. A claimed PASS without stored artifacts for all six SAKAI-02 checks is reported as INCONCLUSIVE, with its measured costs intact.
+
+### Minimal Sakai Pi harness
+
+Use Pi with a configured model and the same browse relay as the smoke test. A single attempt runs SAKAI-02 with an empty catalog.
+
+```sh
+python -m qabro.sakai_pi /path/to/new-private-output \
+  --pi /path/to/pi --browse "$(command -v browse)" --model provider/model
+```
+
+Add `--experiment` to train, extract in a separate text-only Pi session, validate on two fresh seeds, and run five held-out SAKAI-02 pairs. The command writes local worker journals, `comparison.json`, and `report.md` after a complete run. Use `--url http://127.0.0.1:5173/pages/crud` to use a local Sakai deployment.
+
+Both modes use the same constrained creation tool. Inspect returns the next allowed selector, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting a creation action and completes the procedure. This measures the benefit of a skill for this restricted workflow.
