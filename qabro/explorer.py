@@ -14,8 +14,6 @@ from qabro.catalog import Catalog, Scope
 from qabro.contract import Step
 from qabro.jobs import Job, JobQueue
 from qabro.journal import Journal
-from qabro.recipe_format import encode_recipe
-from qabro.runner import Recipe
 
 
 @dataclass(frozen=True)
@@ -112,7 +110,6 @@ class HintDraft:
     variable_inputs: bool
     model_tokens: int
     browser_ns: int
-    recipe: Recipe | None = None
     capabilities: frozenset[str] = frozenset()
 
 
@@ -149,7 +146,7 @@ def explore_next(
     if not draft.summary.strip() or not draft.hint.strip() or not draft.variants:
         raise ValueError("A candidate requires a summary, hint and claimed variants")
     if catalog is not None and catalog.has_active_hint(
-        Scope(**job.payload["scope"]), draft.hint, draft.capabilities, draft.recipe,
+        Scope(**job.payload["scope"]), draft.hint, draft.capabilities,
     ):
         return queue.complete(job, {
             "status": "already_published", **usage,
@@ -163,8 +160,6 @@ def explore_next(
         "variants": sorted(set(draft.variants)),
         "variable_inputs": draft.variable_inputs,
     }
-    if draft.recipe is not None:
-        payload["recipe"] = encode_recipe(draft.recipe)
     payload["capabilities"] = sorted(draft.capabilities)
     candidate = sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     def enqueue_validation(db: sqlite3.Connection) -> None:

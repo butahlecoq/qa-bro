@@ -204,6 +204,8 @@ For example, a test requires the worker to open a form, verify that a button is 
 
 A later `execute` backend could generate JavaScript for QuickJS from the same recipe and return the same events. Before using it for a particular recipe, verify equivalent behavior, time limits, and correct handling of a partially executed sequence.
 
+The explorer learns reusable component interactions from verified observations. Its candidates carry component guidance. The harness decides how to group actions from the current scenario, observed controls, and installed tool capabilities. A learned skill must not encode the ordered actions of the source test.
+
 ## 9. Finding and loading knowledge
 
 Before the LLM makes a selection, the harness filters the catalog by platform, page, operation type, user role, browse capabilities, and version status. It then ranks results by relevance to the task, verified applicability, robustness, and observed cost.
