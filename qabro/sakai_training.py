@@ -118,3 +118,56 @@ def extract_candidate(
     (output / "SKILL.md").write_bytes(encoded)
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+def activate_candidate(
+    directory: Path, source_database: Path, validations: tuple[tuple[Path, str], ...],
+) -> dict:
+    """Atomically activate an unchanged candidate after two independent worker validations."""
+    from tempfile import NamedTemporaryFile
+
+    path = directory / "manifest.json"
+    manifest = json.loads(path.read_text())
+    if manifest["status"] != "candidate" or len(validations) != 2:
+        raise ValueError("Activation requires an inactive candidate and two validations")
+    digest = sha256((directory / "SKILL.md").read_bytes()).hexdigest()
+    if digest != manifest["content_sha256"]:
+        raise ValueError("Candidate content changed after extraction")
+    source, = manifest["source_attempt_ids"]
+    training_summary(source_database, source)
+    seen_attempts, seen_sessions, seen_seeds = set(), set(), set()
+    source_setup = None
+    for database, attempt in ((source_database, source), *validations):
+        training_summary(database, attempt)
+        events = Journal(database).events(attempt)
+        metadata = next((data for _, event, _, data in events if event == "sakai:worker"), {})
+        setup = (metadata.get("browser_schema_sha256"), metadata.get("scenario_sha256"))
+        session, seed = metadata.get("session_id"), metadata.get("seed")
+        if (
+            setup[0] != manifest["browser_capabilities_sha256"]
+            or not isinstance(setup[1], str) or not re.fullmatch(r"[a-f0-9]{64}", setup[1])
+            or not isinstance(session, str) or not session or type(seed) is not int
+            or attempt in seen_attempts or session in seen_sessions or seed in seen_seeds
+            or any(kind == "tool_finish" and data.get("outcome") != "returned" for _, _, kind, data in events)
+        ):
+            raise ValueError("Worker runs must be clean, independent, and use the same scenario and schema")
+        if attempt == source:
+            source_setup = setup
+            if metadata.get("skill_applied") is not False or metadata.get("skill_sha256") is not None:
+                raise ValueError("Training must run with an empty catalog")
+        elif setup != source_setup or metadata.get("skill_applied") is not True or metadata.get("skill_sha256") != digest:
+            raise ValueError("Validation must apply the exact candidate with the unchanged checks")
+        seen_attempts.add(attempt)
+        seen_sessions.add(session)
+        seen_seeds.add(seed)
+    manifest["validation_attempt_ids"] = [attempt for _, attempt in validations]
+    manifest["status"] = "active"
+    with NamedTemporaryFile(mode="w", dir=directory, delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump(manifest, stream, indent=2)
+        stream.write("\n")
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return manifest
