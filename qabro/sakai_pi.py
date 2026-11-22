@@ -85,7 +85,7 @@ def run_codex(executable, model, prompt, cwd, *, timeout, extension=None, env=No
     return body, usage["input_tokens"] + usage["output_tokens"], None, session
 
 
-def run_opencode(executable, model, prompt, cwd, *, timeout, extension=None, env=None):
+def run_opencode(executable, model, prompt, cwd, *, timeout, extension=None, env=None, component_tool=None):
     if model != "openai/gpt-6-luna":
         raise ValueError("The OpenCode adapter uses subscription model openai/gpt-6-luna")
     environment = {**os.environ, **(env or {})}
@@ -93,13 +93,16 @@ def run_opencode(executable, model, prompt, cwd, *, timeout, extension=None, env
         environment.pop(key, None)
     environment["OPENCODE_DISABLE_PLUGIN"] = "true"
     environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "true"
+    environment.pop("QABRO_COMPONENT_TOOL", None)
+    if component_tool is not None:
+        environment["QABRO_COMPONENT_TOOL"] = json.dumps(component_tool)
     config = {
         "permission": {"*": "deny"},
         "share": "disabled",
         "autoupdate": False,
         "enabled_providers": ["openai"],
     }
-    if extension:
+    if extension or component_tool is not None:
         shim = Path(__file__).with_name("sakai_codex_mcp.py")
         config["mcp"] = {"qabro": {"type": "local", "command": [sys.executable, str(shim)]}}
         config["permission"]["qabro_*"] = "allow"

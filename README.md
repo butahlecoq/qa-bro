@@ -221,6 +221,33 @@ For a two-phase, single-worker comparison, first run with `--train-only --seed 1
 
 Add `--learn-form` during acquisition to learn an unordered map of controls from a recorded form observation. The harness can return those locators with the dialog-open response after verifying the dialog title. The worker still chooses actions, and the harness still verifies the entered values before Save. The candidate carries UI locators only.
 
+### Single-worker autocomplete comparison
+
+On the same local Sakai deployment, run acquisition first, then compare against the frozen result in a new directory.
+
+```sh
+python -m qabro.sakai_autocomplete /path/to/acquisition --train-only
+python -m qabro.sakai_autocomplete /path/to/measurement \
+  --candidate-from /path/to/acquisition/acquisition.json
+```
+
+The explorer tests one component interaction and validates it on two other country labels. During measurement the pure worker has live observation, fill, click, and key presses. The assisted worker also has the validated exact-suggestion capability. Both arms check that exactly the requested chip is selected. The report uses one worker, alternating arm order and separate acquisition costs.
+
+In a 16-pair confirmation on Sakai Vue 5.0.0, both arms passed every case. The assisted worker was faster on all 16 pairs. The median paired saving was 16.58 seconds, with an exact two-sided sign test of `p = 0.000031`.
+
+| Metric | Pure worker | With skill |
+| --- | ---: | ---: |
+| Median case latency | 27.31 s | 11.61 s |
+| Tokens | 237,220 | 51,097 |
+| Completed model steps | 150 | 49 |
+| Worker tool calls | 134 | 19 |
+| Browser MCP calls | 251 | 254 |
+| Browser actions | 111 | 64 |
+
+That is a 2.35× median latency improvement for exact singleton selection. Acquisition used 883 explorer tokens plus model-free browser probes. The gain came from reducing worker turns, while total browser MCP calls stayed close. The form-map candidate for product creation did not improve latency.
+
+The published command reproduced the result on six further labels. Both arms passed all six, and median latency fell from 27.90 to 10.92 seconds. Acquisition took 9.46 seconds and 852 explorer tokens. The assisted arm saved 53,306 tokens after that cost.
+
 Validation asks the worker to consult the candidate. During measurement, the worker can skip the skill when live inspection gives it enough information. The report counts those passes separately from verified skill reuse. In both modes, the worker selects visible fields and the harness validates and executes any batch.
 
 Use `--require-skill` on a fresh measurement seed to measure the cost of deliberately consulting the candidate. Keep these runs separate from optional-skill runs.
