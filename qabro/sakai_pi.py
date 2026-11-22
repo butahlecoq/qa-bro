@@ -139,14 +139,18 @@ def worker_driver(pi, model, cwd, skill, *, launch=run_pi):
                 if body is not None and not price_started:
                     read_before_price = True
                 return {"skill": body}
-            if request.get("action") == "fill" and request.get("selector") == PRICE:
+            targets = request.get("selectors")
+            if (request.get("action") == "fill" and request.get("selector") == PRICE) or (
+                request.get("action") == "fill_many" and isinstance(targets, list) and PRICE in targets
+            ):
                 price_started = True
             return dispatch(request)
 
         prompt = (
             "Create the supplied synthetic product using the sakai tool. "
             "Read the available skill if one is offered. Inspect visible controls and decide which action to take next. "
-            "For fill, send only action and selector: the host inserts the supplied value. "
+            "For fill, send one selector. For independent visible fields you choose to fill together, "
+            "send fill_many with a selectors array. The host inserts their supplied values. "
             "The host runs all checks automatically, including dialog_open; do not stop to run them. "
             "An accepted response means continue to the next step. If unsure, inspect again. "
             "Stop only on creation_complete or if the tool says creation is stopped."

@@ -22,8 +22,9 @@ def main():
             result = {"tools": [{
                 "name": "sakai", "description": "Read the skill, inspect visible controls, or act with a selector.",
                 "inputSchema": {"type": "object", "properties": {
-                    "action": {"enum": ["inspect", "click", "fill", "read_skill"], "type": "string"},
+                    "action": {"enum": ["inspect", "click", "fill", "fill_many", "read_skill"], "type": "string"},
                     "selector": {"type": "string"},
+                    "selectors": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 3},
                 }, "required": ["action"], "additionalProperties": False},
             }]}
         elif method == "tools/call" and request["params"]["name"] == "sakai":

@@ -232,6 +232,33 @@ def smoke(
                             for label, (_, _, target, _) in controls.items() if label in visible
                         ]}
                     pending = steps[position:4] if 1 <= position < 4 else steps[position:position + 1]
+                    if request.get("action") == "fill_many":
+                        selectors = request.get("selectors")
+                        by_selector = {item[2]: item for item in pending if item[1] == "fill"}
+                        if (
+                            not isinstance(selectors, list) or not 2 <= len(selectors) <= 3
+                            or not all(isinstance(target, str) and target in by_selector for target in selectors)
+                            or len(set(selectors)) != len(selectors)
+                        ):
+                            return {"error": "Choose distinct unfilled fields in the open form"}
+                        selected = [by_selector[target] for target in selectors]
+                        remaining = [item for item in pending if item[2] not in selectors]
+                        steps[position:4] = selected + remaining
+                        position += len(selected)
+                        schema = next(tool["inputSchema"] for tool in environment["browse"]["tools"]
+                                      if tool["name"] == "fill")
+                        try:
+                            if "fields" in schema["properties"]:
+                                invoke("form_fields", "fill", {"fields": [
+                                    {"selector": target, "value": value} for _, _, target, value in selected
+                                ]})
+                            else:
+                                for step, _, target, value in selected:
+                                    fill(step, target, value)
+                        except Exception as error:
+                            failure = error
+                            raise
+                        return {"status": "accepted"}
                     matches = [
                         item for item in pending if
                         request.get("action") == item[1] and request.get("selector") == item[2]

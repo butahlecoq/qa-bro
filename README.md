@@ -187,7 +187,7 @@ python -m qabro.sakai_pi /path/to/new-private-output \
 
 Add `--experiment` to train, extract in a separate text-only Pi session, validate on two fresh seeds, and run five held-out SAKAI-02 pairs. The command writes local worker journals, `comparison.json`, and `report.md` after a complete run. Use `--url http://127.0.0.1:5173/pages/crud` to use a local Sakai deployment.
 
-Both modes use the same constrained creation tool. Inspect returns visible control labels and locators, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting a creation action and completes the procedure. This measures the benefit of a skill for this restricted workflow.
+Both modes use the same constrained creation tool. Inspect returns visible control labels and locators, and the host supplies only generated values. The model cannot browse other pages, change existing products, or repeat Save. Independent checks and readback run in the host. The assisted mode counts skill use when the worker reads the candidate before attempting to fill Price and completes the procedure. This measures the benefit of a skill for this restricted workflow.
 
 ### Run the Sakai experiment with a ChatGPT subscription
 
@@ -208,4 +208,4 @@ To measure a fresh pair with a previously validated skill, add `--candidate-from
 
 With Pi, the final successful creation tool response ends the worker session without a follow-up model turn when Pi can terminate that tool batch. The host still checks the saved record before issuing a verdict.
 
-The Sakai learner stores a locator for one verified Price field interaction. The worker chooses the actions from the live controls. Previous scenario-replay reports are historical and cannot be used to measure component learning.
+The Sakai learner stores a locator for one verified Price field interaction. Both modes can request `fill_many` by selecting two or three independent fields in an open form. The harness validates the selected targets, uses native batch fill when supported, and checks field values before permitting a separate Save. The worker chooses the actions from the live controls. Previous scenario-replay reports are historical and cannot be used to measure component learning.

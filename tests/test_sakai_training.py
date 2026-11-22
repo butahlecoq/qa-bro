@@ -32,7 +32,7 @@ class SakaiTrainingTests(unittest.TestCase):
         from qabro.sakai_training import extract_candidate
 
         output = Path(self.enterContext(TemporaryDirectory())) / "candidate"
-        response = '{"selector":"#price"}'
+        response = '{"reuse":true}'
         with patch("qabro.sakai_training.explorer_input", return_value={
             "interaction": {"component": "Price", "tool": "fill", "selector": "#price"},
             "checks": [{"id": "saved", "artifact_id": "local-only"}],
@@ -124,7 +124,7 @@ class SakaiTrainingTests(unittest.TestCase):
 
         def explorer(_):
             calls.append("explorer")
-            return '{"selector":"#price"}', 12
+            return '{"reuse":true}', 12
 
         with patch("qabro.sakai_training.explorer_input", return_value={"interaction": {"selector": "#price"}}):
             active = train_sakai(output, "a" * 64, (1, 2, 3), worker, explorer)

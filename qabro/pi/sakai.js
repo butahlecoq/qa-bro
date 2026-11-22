@@ -11,8 +11,9 @@ export default function (pi) {
     name: "sakai", label: "Sakai CRUD",
     description: "Read the offered skill, inspect visible Sakai controls, or perform it with a selector.",
     parameters: Type.Object({
-      action: StringEnum(["inspect", "click", "fill", "read_skill"]),
+      action: StringEnum(["inspect", "click", "fill", "fill_many", "read_skill"]),
       selector: Type.Optional(Type.String()),
+      selectors: Type.Optional(Type.Array(Type.String(), { minItems: 2, maxItems: 3 })),
     }, { additionalProperties: false }),
     async execute(_id, args, signal) {
       const response = await fetch(QABRO_SAKAI_BRIDGE, {
