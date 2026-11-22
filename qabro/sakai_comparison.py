@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -150,6 +151,7 @@ def compare_sakai(
 def measure_sakai(
     candidate_directory: Path, measurement_seeds: tuple[int, ...], learning_seeds: frozenset[int],
     run_worker: Callable[[int, Path | None], SakaiRun],
+    *, jobs: int = 1,
 ) -> list[tuple[SakaiRun, SakaiRun]]:
     """Run matched measurement pairs in alternating order against one validated skill."""
     if (
@@ -167,8 +169,11 @@ def measure_sakai(
         if sha256(skill.read_bytes()).hexdigest() != digest:
             raise ValueError("The frozen measurement skill changed")
 
-    pairs = []
-    for index, seed in enumerate(measurement_seeds):
+    if type(jobs) is not int or jobs < 1:
+        raise ValueError("The number of measurement workers must be positive")
+
+    def measure_pair(item):
+        index, seed = item
         pair = {}
         for assisted in ((False, True) if index % 2 == 0 else (True, False)):
             check_frozen_skill()
@@ -179,8 +184,12 @@ def measure_sakai(
             pair[assisted] = run
         if pair[False].setup != pair[True].setup:
             raise ValueError("Measurement modes used different configurations")
-        pairs.append((pair[False], pair[True]))
-    return pairs
+        return pair[False], pair[True]
+
+    if jobs == 1:
+        return [measure_pair(item) for item in enumerate(measurement_seeds)]
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        return list(executor.map(measure_pair, enumerate(measurement_seeds)))
 
 
 def _performance_table(pairs: list[dict]) -> list[str]:
@@ -227,6 +236,12 @@ def markdown_report(report: dict) -> str:
         "| Mode | Runs | Median (s) | Range (s) |",
         "| --- | ---: | ---: | --- |",
     ]
+    if "measurement_elapsed_ns" in report:
+        lines[2:2] = [
+            f"Batch wall time: {report['measurement_elapsed_ns'] / 1_000_000_000:.3f} s "
+            f"with {report['measurement_jobs']} concurrent pair slots.",
+            "",
+        ]
     matched = [row for row in report["pairs"] if row["both_pass"]]
     medians = {}
     for mode in ("baseline", "assisted"):

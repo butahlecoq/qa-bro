@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import Thread
+from time import monotonic_ns
 from tempfile import TemporaryDirectory
 
 from qabro.sakai_cases import CREATE_CHECKS
@@ -237,6 +238,7 @@ def main():
     harness.add_argument("--opencode", help="Use the subscription-backed OpenCode CLI")
     harness.add_argument("--codex", help="Use the signed-in Codex CLI instead of Pi")
     parser.add_argument("--pairs", type=int, default=5)
+    parser.add_argument("--jobs", type=int, default=1, help="Run independent held-out pairs concurrently")
     parser.add_argument("--browse", default="browse")
     parser.add_argument("--model", required=True)
     parser.add_argument("--url", default=PUBLIC_URL)
@@ -257,6 +259,10 @@ def main():
         parser.error("--pairs expects between one and thirty pairs")
     if args.pairs > 5 and args.url == PUBLIC_URL:
         parser.error("Use a loopback Sakai deployment for batches larger than five pairs")
+    if not 1 <= args.jobs <= args.pairs:
+        parser.error("--jobs must be between one and the number of pairs")
+    if args.jobs > 1 and (not args.experiment or args.url == PUBLIC_URL):
+        parser.error("Concurrent pairs require --experiment and a loopback Sakai deployment")
     launch = run_opencode if args.opencode else run_codex if args.codex else run_pi
     executable = args.opencode or args.codex or args.pi
     model = f"opencode/{args.model}" if args.opencode else f"codex/{args.model}" if args.codex else args.model
@@ -335,17 +341,22 @@ def main():
         }
         earlier_seeds = set()
     first_seed = args.measurement_seed if args.measurement_seed is not None else args.seed + 3
+    started = monotonic_ns()
     pairs = measure_sakai(
         candidate_dir, tuple(range(first_seed, first_seed + args.pairs)), frozenset(seeds) | earlier_seeds,
         lambda seed, skill: measured_worker_run(*run_worker(
             seed, skill, validate_skill=args.require_skill and skill is not None,
         )),
+        jobs=args.jobs,
     )
+    measurement_elapsed_ns = monotonic_ns() - started
     comparison = compare_sakai(
         pairs, frozenset(CREATE_CHECKS), training_tokens=learning["training"],
         extraction_tokens=learning["extraction"], validation_tokens=learning["validation"],
     )
     comparison["assisted_mode"] = "required_component_skill" if args.require_skill else "component_skill"
+    comparison["measurement_jobs"] = args.jobs
+    comparison["measurement_elapsed_ns"] = measurement_elapsed_ns
     (output / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n")
     (output / "report.md").write_text(markdown_report(comparison))
     print(output / "report.md")

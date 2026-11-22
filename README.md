@@ -213,6 +213,8 @@ The adapter rejects stored API-key credentials and removes API-key environment o
 
 For a 30-pair batch, clone [Sakai Vue 5.0.0](https://github.com/primefaces/sakai-vue/releases/tag/5.0.0) with `git clone --branch 5.0.0 --recurse-submodules https://github.com/primefaces/sakai-vue.git`. In the clone, run `npm ci` and `npm run build`, then start `npm run preview -- --host 127.0.0.1 --port 4173 --strictPort`. Pass `--url http://127.0.0.1:4173/pages/crud --pairs 30` to the OpenCode command. Each pair uses a fresh seed for SAKAI-02. Results from that batch characterize this one scenario across synthetic inputs.
 
+On a local deployment, add `--jobs 3` to run three independent pairs concurrently. Each pair still runs its two modes in order and gets its own browser tabs and model sessions. Compare batch wall times to measure throughput, and use the per-attempt timings to compare latency.
+
 To measure a fresh pair with a previously validated skill, add `--candidate-from /path/to/previous-experiment --measurement-seed 5` and use a new output directory. The harness checks the browser schema, model, target URL, and candidate digest. It keeps reports for separate runs independent.
 
 Validation asks the worker to consult the candidate. During measurement, the worker can skip the skill when live inspection gives it enough information. The report counts those passes separately from verified skill reuse. In both modes, the worker selects visible fields and the harness validates and executes any batch.

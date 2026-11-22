@@ -79,6 +79,21 @@ class SakaiComparisonTests(unittest.TestCase):
         pairs = measure_sakai(directory, (4, 5), frozenset({1, 2, 3}), worker)
         self.assertEqual(calls, [(4, False), (4, True), (5, True), (5, False)])
         self.assertEqual([baseline.seed for baseline, _ in pairs], [4, 5])
+        from threading import Barrier
+
+        gate = Barrier(2)
+        calls.clear()
+
+        def concurrent_worker(seed, skill):
+            first_in_pair = (seed == 4 and skill is None) or (seed == 5 and skill is not None)
+            if first_in_pair:
+                gate.wait(timeout=2)
+            return worker(seed, skill)
+
+        parallel = measure_sakai(directory, (4, 5), frozenset({1, 2, 3}), concurrent_worker, jobs=2)
+        self.assertEqual(parallel, pairs)
+        self.assertEqual([call for call in calls if call[0] == 4], [(4, False), (4, True)])
+        self.assertEqual([call for call in calls if call[0] == 5], [(5, True), (5, False)])
         with self.assertRaisesRegex(ValueError, "training and validation seeds"):
             measure_sakai(directory, (3,), frozenset({1, 2, 3}), worker)
 
