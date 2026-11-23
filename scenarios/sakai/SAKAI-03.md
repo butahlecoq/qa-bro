@@ -2,6 +2,8 @@
 
 Start with a reset CRUD table and an empty search field. Create and verify your own synthetic product using SAKAI-02 without resetting again.
 
+`updated_price_cents` is an integer in minor units. Enter and verify the corresponding dollar amount in the UI. For example, 1234 cents is $12.34.
+
 1. Open the edit dialog from the exact matching row. **original_price** — The dialog shows the supplied name and original price.
 2. Change only Price. **entered_price** — The current numeric field value equals `updated_price_cents`.
 3. Click **Save**. **updated_row** — The dialog closes and the matching row shows the updated price.
